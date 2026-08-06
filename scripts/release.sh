@@ -34,13 +34,29 @@ echo "==> tests"
 xcodebuild -project Cadence.xcodeproj -scheme Cadence \
   -destination 'platform=macOS' test 2>&1 | tail -3
 
+# Sign with the stable self-signed identity when it is available. Passed on the
+# command line rather than baked into project.yml so a fresh clone still builds
+# — it just falls back to ad-hoc, and loses permission persistence.
+SIGN_IDENTITY="Cadence Self-Signed"
+SIGN_ARGS=()
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
+  echo "==> signing identity: $SIGN_IDENTITY"
+  SIGN_ARGS=(CODE_SIGN_IDENTITY="$SIGN_IDENTITY" CODE_SIGN_STYLE=Manual)
+else
+  echo "!! no signing identity — building ad-hoc." >&2
+  echo "!! Calendar permission will reset for everyone on this update." >&2
+  echo "!! Run ./scripts/setup-signing-identity.sh first." >&2
+fi
+
 echo "==> release build"
 rm -rf dist
 xcodebuild -project Cadence.xcodeproj -scheme Cadence \
   -configuration Release -destination 'platform=macOS' \
-  -derivedDataPath dist/build build 2>&1 | tail -2
+  -derivedDataPath dist/build "${SIGN_ARGS[@]}" build 2>&1 | tail -2
 
 APP="dist/build/Build/Products/Release/Cadence.app"
+echo "==> designated requirement"
+codesign -d -r- "$APP" 2>&1 | grep designated || true
 ZIP="dist/Cadence-$VERSION-macOS.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 echo "==> packaged $(du -h "$ZIP" | cut -f1)"

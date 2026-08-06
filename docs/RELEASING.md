@@ -75,9 +75,46 @@ Otherwise, write a new migration.
 
 ## Signing
 
-The build is **ad-hoc signed** (`CODE_SIGN_IDENTITY: "-"`). It runs fine on the
-machine that built it, but Gatekeeper blocks it for anyone else until they
-right-click → Open or clear the quarantine flag:
+Two separate things get confused here, and only one of them needs money.
+
+### Permission persistence — solved, free
+
+macOS records privacy permissions (calendar access) against an app's
+**designated requirement**. Ad-hoc signing makes that requirement the binary's
+own cdhash:
+
+```
+designated => cdhash H"b0ce04e2274775ff3fcb76b246e2f5cee025ed89"
+```
+
+The cdhash changes on every build, so every install *and every update* looked
+like an unknown app and calendar access had to be granted again — for every
+user, not just here.
+
+Builds are now signed with a stable self-signed certificate, which makes the
+requirement identity-based instead:
+
+```
+designated => identifier "dev.xiaochen.Cadence" and certificate root = H"5ff730c7…"
+```
+
+Verified across two builds with different cdhashes: same requirement. Set it up
+once with
+
+```sh
+./scripts/setup-signing-identity.sh
+```
+
+`release.sh` uses it when present and falls back to ad-hoc with a loud warning
+when it is not, so a fresh clone still builds. The certificate lives in the
+login keychain; losing it costs one more permission prompt for everyone, nothing
+more.
+
+### Gatekeeper — not solved, needs the paid account
+
+A self-signed certificate is not a trusted anchor, so this changes nothing for
+first launch. Gatekeeper blocks it for anyone else until they right-click → Open
+or clear the quarantine flag:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Cadence.app

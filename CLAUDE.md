@@ -47,6 +47,17 @@ Consequences worth holding on to:
 Key rotation is possible: `trustedPublicKeys` is an array, so ship a build
 trusting old and new, then drop the old once installs have moved on.
 
+## Signing
+
+Builds are signed with a stable self-signed identity, `Cadence Self-Signed`, in
+the login keychain (`./scripts/setup-signing-identity.sh` creates it). This is
+**not** about Gatekeeper, which still rejects the app — it is about the
+designated requirement. Ad-hoc signing makes that the binary's cdhash, so macOS
+treats every build as a new app and calendar permission resets on every update.
+
+Never move signing into `project.yml`: it is passed on the xcodebuild command
+line so a clone without the certificate still builds, ad-hoc, with a warning.
+
 ## Data safety
 
 The database is at `~/Library/Application Support/Cadence/cadence.sqlite`,
