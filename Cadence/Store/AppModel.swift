@@ -54,6 +54,15 @@ final class AppModel {
     var unscheduled: [TodoDetail] = []
     /// Tasks due within the visible range, shown in the all-day lane.
     var dueInRange: [TodoDetail] = []
+
+    /// Ticks once a minute. Views that show "now" read this instead of each
+    /// creating their own timer.
+    private(set) var clock: Date = Date()
+
+    /// Everything scheduled from today onwards, for the menu bar. Kept separate
+    /// from `scheduledBlocks`, which follows whatever week the calendar is
+    /// showing — the menu bar must not change when you navigate to March.
+    var agendaItems: [AgendaItem] = []
     var selectedBlockID: String?
 
     let eventKit = EventKitService()
@@ -80,7 +89,11 @@ final class AppModel {
     private var listCancellable: AnyDatabaseCancellable?
     private var catalogCancellable: AnyDatabaseCancellable?
     var calendarCancellable: AnyDatabaseCancellable?
+    var agendaCancellable: AnyDatabaseCancellable?
     private var publishTask: Task<Void, Never>?
+    private var clockTask: Task<Void, Never>?
+    /// The day the agenda window was built for, so it can be rebuilt at midnight.
+    var agendaAnchorDay: Date = Calendar.current.startOfDay(for: Date())
 
     init(database: AppDatabase) {
         self.database = database
@@ -89,6 +102,19 @@ final class AppModel {
         restartListObservation()
         startCatalogObservation()
         restartCalendarObservation()
+        restartAgendaObservation()
+        startClock()
+    }
+
+    private func startClock() {
+        clockTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                self.clock = Date()
+                self.refreshAgendaIfDayChanged()
+            }
+        }
     }
 
     private func restartListObservation() {

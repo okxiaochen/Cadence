@@ -11,6 +11,12 @@ struct CadenceApp: App {
 
     @AppStorage("workspaceMode") private var mode: WorkspaceMode = .list
 
+    /// `@AppStorage` rather than a Binding built from Preferences: a computed
+    /// property hands `MenuBarExtra` a freshly constructed Binding on every
+    /// Scene evaluation, which SwiftUI reads as a change and re-evaluates, and
+    /// the app spins at 100% CPU. This projected binding is stable.
+    @AppStorage("showsMenuBarItem") private var showsMenuBarItem = true
+
     init() {
         let database: AppDatabase
         var failure: String?
@@ -49,6 +55,17 @@ struct CadenceApp: App {
         }
         .defaultSize(width: 1200, height: 760)
         .commands { commands }
+
+        MenuBarExtra(isInserted: $showsMenuBarItem) {
+            MenuBarView()
+                .environment(model)
+                .environment(preferences)
+        } label: {
+            // A glyph rather than the next task's title: a label that changes
+            // width every few minutes shoves every other status item sideways.
+            Image(systemName: "calendar.day.timeline.left")
+        }
+        .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView()

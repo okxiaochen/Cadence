@@ -606,10 +606,11 @@ private struct TimeGutter: View {
 }
 
 private struct CurrentTimeIndicator: View {
+    @Environment(AppModel.self) private var model
+
     var geometry: CalendarGeometry
 
-    @State private var now = Date()
-    private let tick = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+    private var now: Date { model.clock }
 
     var body: some View {
         Group {
@@ -628,6 +629,5 @@ private struct CurrentTimeIndicator: View {
             }
         }
         .allowsHitTesting(false)
-        .onReceive(tick) { now = $0 }
     }
 }

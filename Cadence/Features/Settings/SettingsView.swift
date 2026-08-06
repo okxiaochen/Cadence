@@ -20,6 +20,7 @@ struct SettingsView: View {
 
 private struct PlanningSettings: View {
     @Environment(Preferences.self) private var preferences
+    @AppStorage("showsMenuBarItem") private var showsMenuBarItem = true
 
     var body: some View {
         @Bindable var preferences = preferences
@@ -35,6 +36,10 @@ private struct PlanningSettings: View {
                     }
                 }
                 Toggle("Include weekends", isOn: $preferences.includesWeekends)
+            }
+
+            Section("Menu bar") {
+                Toggle("Show the agenda in the menu bar", isOn: $showsMenuBarItem)
             }
 
             Section("Scheduling") {

@@ -59,6 +59,26 @@ outside the bundle, so replacing the app never touches it.
   again. Add a new one. `testShippedMigrationIdentifiersAreStable` guards this.
 - The updater snapshots and verifies the database before every install.
 
+## SwiftUI traps already hit here
+
+- **Never hand a `Scene` a freshly built `Binding` from a computed property.**
+  `MenuBarExtra(isInserted: someComputedBinding)` makes a new Binding on every
+  Scene evaluation, SwiftUI reads that as a change, and the app spins at 100%
+  CPU with no frame of our own code on the stack. Use `@AppStorage`/`@State`
+  projected bindings, whose identity is stable.
+- **Do not store a `Timer.publish(…)` in a View struct.** The struct is
+  recreated on every render, so is the publisher. One `clock` on `AppModel`
+  serves every view that shows "now".
+- **`.frame` proposes a size, it does not clip.** Text that wraps past the
+  proposed height still draws, so a calendar block's background can cover the
+  block below it. Clip explicitly.
+- **`Color.clear.frame(width:)` is still flexible vertically** and will stretch
+  a header row to fill the window.
+
+When something spins, `sample <pid>` first. If none of our symbols appear in the
+hot path it is a SwiftUI update loop, and bisecting by deleting scenes/views
+finds it far faster than reading the code.
+
 ## Shape of the code
 
 - `Domain/` — value types and pure logic (grouping, layout, capture parsing)
