@@ -12,7 +12,7 @@ release with the zip attached. The version in the bundle and the git tag come
 from the same place, so they cannot drift.
 
 Users update by downloading the new zip and replacing `/Applications/Cadence.app`.
-There is no in-app updater — see [Auto-update](#auto-update) below.
+The app also checks for updates itself — see [Auto-update](#auto-update) below.
 
 ---
 
