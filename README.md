@@ -3,10 +3,23 @@
 A native macOS task manager with drag-and-drop time blocking and an AI agent
 driven by your local AI CLI (`claude`, `codex`, …).
 
-> "Cadence" is a working name — rename freely before any code is written.
+**Status:** M1–M5 built and passing — 189 tests, plus live end-to-end tests
+against a real CLI covering scheduling and memory self-correction.
 
-**Status:** M1–M5 built and passing — 171 tests, plus live end-to-end tests
-against the real CLI covering scheduling and memory self-correction.
+## Install
+
+Download `Cadence-macOS.zip` from [Releases](../../releases), unzip, and drag
+`Cadence.app` to `/Applications`.
+
+The build is **ad-hoc signed only** — no Developer ID, no notarisation — so
+Gatekeeper will refuse it on first launch. Either right-click the app and choose
+**Open**, or clear the quarantine flag:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Cadence.app
+```
+
+Requires macOS 15 or later. Building it yourself avoids all of this.
 
 Three view modes, switched from the toolbar or the View menu: **List**,
 **Calendar**, and **Split** (list on the left, grid on the right — drag from one
