@@ -1,5 +1,8 @@
 # Working on Cadence
 
+<!-- AGENTS.md is a symlink to this file, so both names serve identical
+     content and cannot drift apart. Edit this one. -->
+
 A native macOS task manager: tasks, drag-and-drop time blocking, and an AI
 planner driven by the user's own local CLI. Personal tool, shipped publicly at
 `okxiaochen/Cadence`.
