@@ -1,0 +1,108 @@
+import Foundation
+
+// MARK: - Sidebar selection
+
+enum SmartList: String, CaseIterable, Identifiable, Hashable {
+    case today, upcoming, anytime, logbook
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .today: "Today"
+        case .upcoming: "Upcoming"
+        case .anytime: "Anytime"
+        case .logbook: "Logbook"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .today: "star"
+        case .upcoming: "calendar"
+        case .anytime: "tray.full"
+        case .logbook: "checkmark.circle"
+        }
+    }
+}
+
+enum SidebarSelection: Hashable {
+    case smart(SmartList)
+    case project(String)
+    case tag(String)
+}
+
+// MARK: - Grouping & sorting
+
+enum TodoGrouping: String, CaseIterable, Identifiable, Hashable {
+    case none, day, project, tag, dueDate
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .none: "No Grouping"
+        case .day: "Day"
+        case .project: "Project"
+        case .tag: "Tag"
+        case .dueDate: "Due Date"
+        }
+    }
+}
+
+enum TodoSort: String, CaseIterable, Identifiable, Hashable {
+    case manual, dueDate, priority, created
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .manual: "Manual"
+        case .dueDate: "Due Date"
+        case .priority: "Priority"
+        case .created: "Date Added"
+        }
+    }
+}
+
+// MARK: - Query
+
+/// Everything needed to turn a sidebar selection into a SQL query. Held by
+/// `TodoListModel`; a change restarts the underlying database observation.
+struct TodoQuery: Hashable {
+    var selection: SidebarSelection = .smart(.today)
+    var grouping: TodoGrouping = .none
+    var sort: TodoSort = .manual
+    var searchText: String = ""
+    var showsCompleted: Bool = false
+
+    /// Upcoming is a schedule, so it reads best broken down by day — the same
+    /// shape Apple Reminders uses. Picking any grouping explicitly overrides it.
+    var resolvedGrouping: TodoGrouping {
+        if grouping == .none, case .smart(.upcoming) = selection { return .day }
+        return grouping
+    }
+
+    /// How far ahead `.upcoming` looks.
+    static let upcomingHorizonDays = 14
+
+    /// Completed items older than this drop out of the Logbook.
+    static let logbookHorizonDays = 30
+}
+
+// MARK: - Section
+
+struct TodoSection: Identifiable, Hashable {
+    var id: String
+    var title: String
+    var symbolName: String?
+    var colorHex: String?
+    var items: [TodoDetail]
+    /// Chronological order for day sections; unused by the other groupings.
+    var sortKey: Double = 0
+    /// The day this section stands for, so adding a task inside it can set the
+    /// date without the user typing one.
+    var date: Date?
+    /// Empty day sections are still shown, so there is somewhere to add to.
+    var acceptsQuickAdd: Bool = false
+}

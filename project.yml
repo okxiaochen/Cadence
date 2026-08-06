@@ -1,0 +1,75 @@
+name: Cadence
+
+options:
+  bundleIdPrefix: dev.xiaochen
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: 7.0.0
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_HARDENED_RUNTIME: NO
+
+targets:
+  Cadence:
+    type: application
+    platform: macOS
+    sources:
+      - path: Cadence
+    dependencies:
+      - package: GRDB
+        product: GRDB
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.xiaochen.Cadence
+        PRODUCT_NAME: Cadence
+        INFOPLIST_FILE: Cadence/App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_PREVIEWS: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
+
+  CadenceTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/CadenceTests
+    dependencies:
+      - target: Cadence
+      - package: GRDB
+        product: GRDB
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.xiaochen.CadenceTests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Cadence:
+    build:
+      targets:
+        Cadence: all
+        CadenceTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - CadenceTests
+    profile:
+      config: Release
+    archive:
+      config: Release
