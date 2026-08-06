@@ -142,12 +142,17 @@ final class Updater {
             state = .downloading(received: 0, total: Int64(release.byteCount))
             let zip = try await download(release)
 
-            // 3. Unpack and check it is really Cadence, and really newer.
+            // 3. Verify the signature before anything is unpacked or executed.
+            //    This is the only check that catches a *substituted* build
+            //    rather than merely a corrupt one.
             state = .installing
+            try await verifySignature(of: zip, in: release)
+
+            // 4. Unpack and check it is really Cadence, and really newer.
             let staged = try unpack(zip)
             try validate(staged, against: release)
 
-            // 4. Hand the swap to a script that outlives this process, then quit.
+            // 5. Hand the swap to a script that outlives this process, then quit.
             try scheduleSwap(from: staged, backupPath: backup.path)
             NSApp.terminate(nil)
 
@@ -183,6 +188,21 @@ final class Updater {
             .appendingPathComponent("Cadence-\(release.tag)-\(UUID().uuidString).zip")
         try data.write(to: url)
         return url
+    }
+
+    private func verifySignature(of zip: URL, in release: AppRelease) async throws {
+        guard let signatureURL = release.signatureURL else {
+            throw UpdateError.unsigned
+        }
+        let (signatureData, response) = try await session.data(from: signatureURL)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let signature = String(data: signatureData, encoding: .utf8)
+        else { throw UpdateError.unsigned }
+
+        let payload = try Data(contentsOf: zip)
+        guard ReleaseSignature.verify(payload: payload, base64Signature: signature) else {
+            throw UpdateError.badSignature
+        }
     }
 
     private func unpack(_ zip: URL) throws -> URL {
@@ -283,6 +303,8 @@ enum UpdateError: LocalizedError {
     case unpackFailed
     case backupUnreadable
     case notInstalled
+    case unsigned
+    case badSignature
 
     var errorDescription: String? {
         switch self {
@@ -302,6 +324,12 @@ enum UpdateError: LocalizedError {
         case .notInstalled:
             "Cadence does not appear to be running from an app bundle, so it "
                 + "cannot replace itself. Download the update manually."
+        case .unsigned:
+            "That release is not signed, so it was not installed. Download it "
+                + "from GitHub yourself if you trust it."
+        case .badSignature:
+            "The download was not signed by the Cadence release key and was "
+                + "discarded. Nothing has been changed."
         }
     }
 }

@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 import GRDB
 @testable import Cadence
 
@@ -168,5 +169,107 @@ final class UpdaterTests: XCTestCase {
         XCTAssertTrue(folder.hasDirectoryPath)
 
         for url in remaining { try? FileManager.default.removeItem(at: url) }
+    }
+
+    // MARK: - Release signatures
+
+    /// A throwaway key pair, so the tests never touch the real release key.
+    private func makeKeyPair() -> (private: Curve25519.Signing.PrivateKey, publicBase64: String) {
+        let key = Curve25519.Signing.PrivateKey()
+        return (key, key.publicKey.rawRepresentation.base64EncodedString())
+    }
+
+    func testAGenuineSignatureVerifies() throws {
+        let (key, publicKey) = makeKeyPair()
+        let payload = Data("pretend this is a zip".utf8)
+        let signature = try key.signature(for: payload).base64EncodedString()
+
+        XCTAssertTrue(ReleaseSignature.verify(
+            payload: payload, base64Signature: signature, publicKeys: [publicKey]
+        ))
+    }
+
+    func testATamperedDownloadIsRejected() throws {
+        let (key, publicKey) = makeKeyPair()
+        let signature = try key.signature(for: Data("original".utf8)).base64EncodedString()
+
+        // This is the attack the signature exists to stop: the release asset is
+        // swapped for something else after it was published.
+        XCTAssertFalse(ReleaseSignature.verify(
+            payload: Data("substituted".utf8),
+            base64Signature: signature,
+            publicKeys: [publicKey]
+        ))
+    }
+
+    func testAnotherKeysSignatureIsRejected() throws {
+        let (attacker, _) = makeKeyPair()
+        let (_, ourPublicKey) = makeKeyPair()
+        let payload = Data("zip".utf8)
+        let signature = try attacker.signature(for: payload).base64EncodedString()
+
+        XCTAssertFalse(ReleaseSignature.verify(
+            payload: payload, base64Signature: signature, publicKeys: [ourPublicKey]
+        ))
+    }
+
+    func testGarbageSignaturesAreRejected() {
+        let (_, publicKey) = makeKeyPair()
+        for bad in ["", "not base64!!", "aGVsbG8="] {
+            XCTAssertFalse(ReleaseSignature.verify(
+                payload: Data("zip".utf8), base64Signature: bad, publicKeys: [publicKey]
+            ), "accepted “\(bad)”")
+        }
+    }
+
+    func testRotationAcceptsEitherKey() throws {
+        let (oldKey, oldPublic) = makeKeyPair()
+        let (newKey, newPublic) = makeKeyPair()
+        let payload = Data("zip".utf8)
+
+        // A build trusting both keys can install releases signed by either,
+        // which is what makes rotating the key possible at all.
+        for key in [oldKey, newKey] {
+            let signature = try key.signature(for: payload).base64EncodedString()
+            XCTAssertTrue(ReleaseSignature.verify(
+                payload: payload, base64Signature: signature,
+                publicKeys: [oldPublic, newPublic]
+            ))
+        }
+    }
+
+    func testThePinnedKeyIsWellFormed() throws {
+        XCTAssertFalse(ReleaseSignature.trustedPublicKeys.isEmpty, "nothing could be verified")
+        for encoded in ReleaseSignature.trustedPublicKeys {
+            let raw = try XCTUnwrap(Data(base64Encoded: encoded))
+            XCTAssertNoThrow(try Curve25519.Signing.PublicKey(rawRepresentation: raw))
+        }
+    }
+
+    func testTheSignatureAssetIsFoundAndNotMistakenForTheApp() throws {
+        let release = try ReleaseFeed.parse(feed(assets: [
+            [
+                "name": "Cadence-0.2.0-macOS.zip",
+                "size": 5_000_000,
+                "browser_download_url":
+                    "https://github.com/okxiaochen/Cadence/releases/download/v0.2.0/Cadence-0.2.0-macOS.zip"
+            ],
+            [
+                "name": "Cadence-0.2.0-macOS.zip.sig",
+                "size": 88,
+                "browser_download_url":
+                    "https://github.com/okxiaochen/Cadence/releases/download/v0.2.0/Cadence-0.2.0-macOS.zip.sig"
+            ]
+        ]))
+
+        XCTAssertEqual(release.downloadURL.lastPathComponent, "Cadence-0.2.0-macOS.zip")
+        XCTAssertEqual(release.signatureURL?.lastPathComponent, "Cadence-0.2.0-macOS.zip.sig")
+    }
+
+    func testAReleaseWithoutASignatureIsFlagged() throws {
+        // Parsing still succeeds — the updater is what refuses to install it,
+        // so the user is told why rather than seeing nothing happen.
+        let release = try ReleaseFeed.parse(feed())
+        XCTAssertNil(release.signatureURL)
     }
 }

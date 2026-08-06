@@ -9,6 +9,8 @@ struct AppRelease: Equatable {
     var downloadURL: URL
     var byteCount: Int
     var pageURL: URL
+    /// Detached Ed25519 signature over the zip, published alongside it.
+    var signatureURL: URL?
 }
 
 /// Just enough of semantic versioning to compare two builds. Deliberately
@@ -87,6 +89,14 @@ enum ReleaseFeed {
               downloadURL.scheme == "https"
         else { throw ReleaseFeedError.noAsset }
 
+        let assetName = asset["name"] as? String ?? ""
+        let signatureName = ReleaseSignature.signatureAssetName(for: assetName)
+        let signatureURL = assets
+            .first { ($0["name"] as? String) == signatureName }
+            .flatMap { $0["browser_download_url"] as? String }
+            .flatMap(URL.init(string:))
+            .flatMap { $0.scheme == "https" ? $0 : nil }
+
         return AppRelease(
             version: version,
             tag: tag,
@@ -94,7 +104,8 @@ enum ReleaseFeed {
             notes: json["body"] as? String ?? "",
             downloadURL: downloadURL,
             byteCount: asset["size"] as? Int ?? 0,
-            pageURL: pageURL
+            pageURL: pageURL,
+            signatureURL: signatureURL
         )
     }
 

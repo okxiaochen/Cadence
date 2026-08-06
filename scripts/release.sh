@@ -45,12 +45,18 @@ ZIP="dist/Cadence-$VERSION-macOS.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 echo "==> packaged $(du -h "$ZIP" | cut -f1)"
 
+# Sign the zip. Installed copies refuse an update they cannot verify, so a
+# release without this is a release nobody can install.
+echo "==> signing"
+swift scripts/sign-release.swift sign "$ZIP"
+[[ -f "$ZIP.sig" ]] || { echo "signing produced no .sig" >&2; exit 1; }
+
 git add project.yml
 git commit -m "Release $VERSION"
 git tag "v$VERSION"
 git push origin main --tags
 
-gh release create "v$VERSION" "$ZIP" \
+gh release create "v$VERSION" "$ZIP" "$ZIP.sig" \
   --title "Cadence $VERSION" \
   --generate-notes \
   --notes-start-tag "$(git describe --abbrev=0 --tags "v$VERSION^" 2>/dev/null || echo '')"

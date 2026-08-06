@@ -22,3 +22,7 @@ dist/
 
 # macOS
 .DS_Store
+
+# Release signing key must never be committed (it lives in ~/.config/cadence)
+*.sig
+release-key
