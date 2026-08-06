@@ -46,8 +46,13 @@ final class AppDatabase {
         var migrator = DatabaseMigrator()
 
         #if DEBUG
-        // Rebuild from scratch when a migration changes during development.
-        migrator.eraseDatabaseOnSchemaChange = true
+        // Off by default. This wipes the database whenever the schema changes,
+        // which shares a file with the installed app — convenient while the
+        // schema was in flux, data loss now that it holds real tasks.
+        // Opt in per-run when it is genuinely wanted:
+        //     CADENCE_RESET_DB=1 xcodebuild …
+        migrator.eraseDatabaseOnSchemaChange =
+            ProcessInfo.processInfo.environment["CADENCE_RESET_DB"] == "1"
         #endif
 
         migrator.registerMigration("v1_core") { db in

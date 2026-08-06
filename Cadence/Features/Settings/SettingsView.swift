@@ -11,6 +11,8 @@ struct SettingsView: View {
                 .tabItem { Label("AI", systemImage: "sparkles") }
             MemorySettings()
                 .tabItem { Label("Memory", systemImage: "brain") }
+            UpdateSettings()
+                .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
         }
         .frame(width: 540, height: 420)
     }
@@ -363,5 +365,68 @@ private struct MemoryRow: View {
             }
         }
         .padding(.vertical, 3)
+    }
+}
+
+// MARK: - Updates
+
+private struct UpdateSettings: View {
+    @Environment(Updater.self) private var updater
+
+    @State private var backups: [URL] = []
+
+    var body: some View {
+        @Bindable var updater = updater
+
+        Form {
+            Section("Updates") {
+                LabeledContent("Version", value: updater.currentVersion.description)
+                Toggle("Check automatically", isOn: $updater.checksAutomatically)
+                HStack {
+                    Button("Check Now") { Task { await updater.checkNow() } }
+                        .disabled(updater.state.isBusy)
+                    if let checked = updater.lastCheckedAt {
+                        Text("last checked \(Format.dateTime(checked))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Section("Backups") {
+                Text("A snapshot of your tasks is taken before every update, and "
+                     + "the update is stopped if the snapshot cannot be read back.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if backups.isEmpty {
+                    Text("No snapshots yet.").foregroundStyle(.secondary)
+                } else {
+                    ForEach(backups.prefix(5), id: \.self) { url in
+                        HStack {
+                            Text(url.deletingPathExtension().lastPathComponent)
+                                .font(.caption.monospaced())
+                                .lineLimit(1)
+                            Spacer()
+                            Text(size(of: url)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Button("Show in Finder") {
+                    if let folder = try? DatabaseBackup.folder() {
+                        NSWorkspace.shared.activateFileViewerSelecting([folder])
+                    }
+                }
+                .controlSize(.small)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { backups = (try? DatabaseBackup.list()) ?? [] }
+    }
+
+    private func size(of url: URL) -> String {
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 }

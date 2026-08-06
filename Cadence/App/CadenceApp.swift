@@ -6,6 +6,7 @@ struct CadenceApp: App {
     @State private var quickCapture: QuickCaptureController
     @State private var preferences = Preferences.shared
     @State private var session: AgentSession
+    @State private var updater: Updater
     @State private var startupError: String?
 
     @AppStorage("workspaceMode") private var mode: WorkspaceMode = .list
@@ -26,6 +27,7 @@ struct CadenceApp: App {
         _model = State(initialValue: model)
         _quickCapture = State(initialValue: QuickCaptureController(model: model))
         _session = State(initialValue: AgentSession(model: model))
+        _updater = State(initialValue: Updater(database: database))
         _startupError = State(initialValue: failure)
     }
 
@@ -35,8 +37,10 @@ struct CadenceApp: App {
                 .environment(model)
                 .environment(preferences)
                 .environment(session)
+                .environment(updater)
                 .task {
                     if let startupError { model.errorMessage = startupError }
+                    await updater.checkInBackground()
                     GlobalHotkey.shared.onFire = { [quickCapture] in
                         Task { @MainActor in quickCapture.toggle() }
                     }
@@ -51,6 +55,7 @@ struct CadenceApp: App {
                 .environment(model)
                 .environment(preferences)
                 .environment(session)
+                .environment(updater)
         }
     }
 
@@ -123,6 +128,13 @@ struct CadenceApp: App {
                 if let id = model.selectedBlockID { model.deleteBlock(id) }
             }
             .disabled(model.selectedBlockID == nil)
+        }
+
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                Task { await updater.checkNow() }
+            }
+            .disabled(updater.state.isBusy)
         }
 
         CommandGroup(replacing: .help) {}

@@ -48,6 +48,7 @@ struct RootView: View {
                 }
             }
             .toolbar { toolbar }
+            .safeAreaInset(edge: .top, spacing: 0) { UpdateBanner() }
         }
         .frame(minWidth: 900, minHeight: 560)
         .onAppear {
