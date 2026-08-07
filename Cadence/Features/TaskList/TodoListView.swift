@@ -30,15 +30,17 @@ struct TodoListView: View {
 
         return List(selection: $model.selection) {
             ForEach(model.sections) { section in
-                if section.title.isEmpty {
-                    rows(for: section)
-                } else {
-                    Section {
-                        rows(for: section)
-                    } header: {
-                        sectionHeader(section)
-                    }
+                // Deliberately not a `Section`. A List pins its headers and
+                // paints an opaque bar behind whichever one is stuck to the
+                // top — a surface the window material cannot show through, and
+                // the brightest thing in the pane. The heading scrolls with its
+                // own tasks instead.
+                if !section.title.isEmpty {
+                    sectionHeader(section)
+                        .selectionDisabled()
+                        .listRowSeparator(.hidden)
                 }
+                rows(for: section)
             }
         }
         .listStyle(.inset)
