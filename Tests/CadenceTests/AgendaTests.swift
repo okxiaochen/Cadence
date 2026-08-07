@@ -104,51 +104,83 @@ final class AgendaTests: XCTestCase {
         XCTAssertNil(result[0].items[0].interval)
     }
 
-    // MARK: - What the status item highlights
+    // MARK: - What the header reports about today
 
-    func testSomethingUnderwayWinsOverWhatIsNext() {
-        let items = AgendaBuilder.items(
-            blocks: [
-                block("Running now", day: 5, from: 9, to: 11),
-                block("Later today", day: 5, from: 14, to: 15)
-            ],
-            allDay: [],
+    private func focus(
+        _ blocks: [ScheduledBlock],
+        _ untimed: [TodoDetail] = [],
+        at moment: Date? = nil
+    ) -> AgendaBuilder.Focus {
+        AgendaBuilder.focus(
+            in: AgendaBuilder.items(blocks: blocks, allDay: untimed, calendar: calendar),
+            now: moment ?? now,
             calendar: calendar
         )
-        XCTAssertEqual(
-            AgendaBuilder.focus(in: items, now: now, calendar: calendar)?.todo.title,
-            "Running now"
-        )
+    }
+
+    func testSomethingUnderwayWinsOverWhatIsNext() {
+        let result = focus([
+            block("Running now", day: 5, from: 9, to: 11),
+            block("Later today", day: 5, from: 14, to: 15)
+        ])
+        guard case .underway(let item) = result else { return XCTFail("got \(result)") }
+        XCTAssertEqual(item.todo.title, "Running now")
     }
 
     func testOtherwiseTheNextThingToday() {
-        let items = AgendaBuilder.items(
-            blocks: [
-                block("Finished", day: 5, from: 8, to: 9),
-                block("Coming up", day: 5, from: 14, to: 15)
-            ],
-            allDay: [],
-            calendar: calendar
-        )
-        XCTAssertEqual(
-            AgendaBuilder.focus(in: items, now: now, calendar: calendar)?.todo.title,
-            "Coming up"
-        )
+        let result = focus([
+            block("Finished", day: 5, from: 8, to: 9),
+            block("Coming up", day: 5, from: 14, to: 15)
+        ])
+        guard case .next(let item) = result else { return XCTFail("got \(result)") }
+        XCTAssertEqual(item.todo.title, "Coming up")
     }
 
-    func testTomorrowIsNotOfferedAsUpNext() {
-        // "Up next: something 22 hours away" is noise, not information.
-        let items = AgendaBuilder.items(
-            blocks: [block("Tomorrow", day: 6, from: 9, to: 10)],
-            allDay: [],
-            calendar: calendar
+    /// The bug this enum exists for: at 22:00 every block has been and gone,
+    /// but the day is not empty and saying so was simply false.
+    func testWorkWhoseTimeHasPassedIsReportedAsStillOpen() {
+        let result = focus(
+            [
+                block("Morning", day: 5, from: 4, to: 6),
+                block("Later morning", day: 5, from: 9, to: 10)
+            ],
+            at: date(5, 22)
         )
-        XCTAssertNil(AgendaBuilder.focus(in: items, now: now, calendar: calendar))
+        guard case .overdue(let count) = result else { return XCTFail("got \(result)") }
+        XCTAssertEqual(count, 2)
+    }
+
+    func testAnAllDayTaskCountsTowardsWhatIsStillOpen() {
+        let result = focus([], [allDay("Due today", day: 5)], at: date(5, 22))
+        guard case .overdue(let count) = result else { return XCTFail("got \(result)") }
+        XCTAssertEqual(count, 1)
+    }
+
+    func testCompletedWorkIsNotReportedAsOpen() {
+        // Completed items are filtered out of the agenda entirely, so a day
+        // whose work is all done reads as empty rather than as done. Assert the
+        // behaviour that actually reaches the header.
+        let result = focus(
+            [block("Done", day: 5, from: 9, to: 10, status: .done)],
+            at: date(5, 22)
+        )
+        XCTAssertEqual(result, .empty)
+    }
+
+    func testAnEmptyDayIsReportedAsEmpty() {
+        XCTAssertEqual(focus([block("Tomorrow", day: 6, from: 9, to: 10)]), .empty)
+    }
+
+    func testTomorrowIsNeverOfferedAsUpNext() {
+        // "Up next: something 22 hours away" is noise, not information.
+        XCTAssertEqual(focus([block("Tomorrow", day: 6, from: 9, to: 10)]), .empty)
     }
 
     func testAnAllDayItemIsNeverUpNext() {
-        let items = AgendaBuilder.items(blocks: [], allDay: [allDay("Due", day: 5)], calendar: calendar)
-        XCTAssertNil(AgendaBuilder.focus(in: items, now: now, calendar: calendar))
+        // It has no moment to count down to; before any timed work it is just
+        // part of the day's open list.
+        let result = focus([], [allDay("Due", day: 5)])
+        guard case .overdue = result else { return XCTFail("got \(result)") }
     }
 
     func testPassedAndUnderwayFlags() {

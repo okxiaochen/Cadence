@@ -53,30 +53,55 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var header: some View {
-        if let focus = model.agendaFocus(now: now), let interval = focus.interval {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(focus.isUnderway(now) ? "Now" : "Up next")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(focus.todo.title)
-                    .font(.headline)
-                    .lineLimit(1)
+        Group {
+            switch model.agendaFocus(now: now) {
+            case .underway(let item):
+                task(item, label: "Now")
+            case .next(let item):
+                task(item, label: "Up next")
+            case .overdue(let count):
+                summary(
+                    count == 1 ? "1 task still open today"
+                               : "\(count) tasks still open today",
+                    symbol: "clock.badge.exclamationmark",
+                    tint: .orange
+                )
+            case .allDone(let count):
+                summary(
+                    count == 1 ? "Today is done" : "All \(count) done today",
+                    symbol: "checkmark.circle.fill",
+                    tint: .green
+                )
+            case .empty:
+                summary("Nothing scheduled today", symbol: "calendar", tint: .secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private func task(_ item: AgendaItem, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(item.todo.title)
+                .font(.headline)
+                .lineLimit(1)
+            if let interval = item.interval {
                 Text(remaining(for: interval))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-        } else {
-            HStack {
-                Text("Nothing scheduled today")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+        }
+    }
+
+    private func summary(_ text: String, symbol: String, tint: Color) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: symbol).foregroundStyle(tint)
+            Text(text).font(.callout)
+            Spacer()
         }
     }
 

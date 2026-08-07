@@ -65,8 +65,8 @@ extension AppModel {
         return count == 0 ? "" : "\(count)"
     }
 
-    /// What the status item shows: whatever is running, else the next thing today.
-    func agendaFocus(now: Date = Date()) -> AgendaItem? {
+    /// What the menu bar header reports about today.
+    func agendaFocus(now: Date = Date()) -> AgendaBuilder.Focus {
         AgendaBuilder.focus(in: agendaItems, now: now)
     }
 }

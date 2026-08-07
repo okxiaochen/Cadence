@@ -124,19 +124,41 @@ enum AgendaBuilder {
         }
     }
 
-    /// What the status item itself says: whatever is happening now, or the next
-    /// thing due to start today.
+    /// What the menu bar header says about today.
+    ///
+    /// An enum rather than an optional item: "no next thing" and "nothing
+    /// today" are different situations, and reporting the first as the second
+    /// told people their day was empty while the list underneath showed three
+    /// tasks on it.
+    enum Focus: Equatable {
+        case underway(AgendaItem)
+        case next(AgendaItem)
+        /// Time has passed for this many open items today.
+        case overdue(count: Int)
+        case allDone(count: Int)
+        case empty
+    }
+
     static func focus(
         in items: [AgendaItem],
         now: Date = Date(),
         calendar: Calendar = .current
-    ) -> AgendaItem? {
-        if let underway = items.first(where: { $0.isUnderway(now) }) { return underway }
-        return items.first { item in
-            guard let interval = item.interval else { return false }
-            // Against `now`, not `isDateInToday`: that reads the real clock and
-            // would ignore the date this was asked about.
-            return interval.start > now && calendar.isDate(interval.start, inSameDayAs: now)
+    ) -> Focus {
+        let today = items.filter { calendar.isDate($0.day, inSameDayAs: now) }
+
+        if let underway = today.first(where: { $0.isUnderway(now) && !$0.todo.isCompleted }) {
+            return .underway(underway)
         }
+        if let next = today.first(where: { item in
+            guard let interval = item.interval, !item.todo.isCompleted else { return false }
+            return interval.start > now
+        }) {
+            return .next(next)
+        }
+
+        guard !today.isEmpty else { return .empty }
+
+        let open = today.filter { !$0.todo.isCompleted }
+        return open.isEmpty ? .allDone(count: today.count) : .overdue(count: open.count)
     }
 }
