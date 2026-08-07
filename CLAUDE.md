@@ -80,6 +80,10 @@ outside the bundle, so replacing the app never touches it.
 - **Do not store a `Timer.publish(…)` in a View struct.** The struct is
   recreated on every render, so is the publisher. One `clock` on `AppModel`
   serves every view that shows "now".
+- **`.offset` moves rendering and hit testing, not the layout frame.** An
+  `.overlay` added *after* an offset is positioned against the un-offset frame
+  and draws somewhere else entirely — near the container's origin. Put the
+  overlay before the offset.
 - **`.frame` proposes a size, it does not clip.** Text that wraps past the
   proposed height still draws, so a calendar block's background can cover the
   block below it. Clip explicitly.

@@ -198,15 +198,19 @@ struct CalendarView: View {
             conflicts: conflicts(interval, excluding: positioned.id)
         )
         .frame(width: rect.width, height: rect.height, alignment: .top)
+        // Before `.offset`, not after: `.offset` moves rendering and hit
+        // testing but leaves the *layout* frame where it was, so an overlay
+        // added afterwards is positioned against the un-offset frame and draws
+        // adrift near the grid's origin.
+        .overlay {
+            ResizeAffordance(height: rect.height, hovering: hoverMode(for: positioned.id))
+        }
         .offset(x: rect.minX, y: rect.minY)
         .onTapGesture { model.selectedBlockID = positioned.id }
         .simultaneousGesture(
             TapGesture(count: 2).onEnded { model.inspectedID = positioned.block.todo.id }
         )
         .gesture(blockGesture(positioned, geometry: geometry, rect: rect))
-        .overlay {
-            ResizeAffordance(height: rect.height, hovering: hoverMode(for: positioned.id))
-        }
         .onContinuousHover { phase in
             switch phase {
             case .active(let point):
