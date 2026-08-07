@@ -90,6 +90,16 @@ nothing: `.behindWindow` blending needs the `NSWindow` itself to be non-opaque,
 and any view painting its own background (`.bar`, a `List`'s scroll background,
 the toolbar) will punch an opaque hole straight through it.
 
+Two hazards there, both already paid for:
+
+- **`.hudWindow` forces a dark appearance** whatever the system is set to. It
+  darkened the entire window and did not come back on switching style, because
+  the material is applied to a view we do not own. Never pin `appearance` on
+  those views either — inheriting is what keeps light/dark working.
+- The split view's sidebar column has its own `NSVisualEffectView` beneath the
+  `List`. In solid mode it must be **hidden**, not repainted: `.windowBackground`
+  as a *material* is a near-miss of `windowBackgroundColor` and the seam shows.
+
 ## SwiftUI traps already hit here
 
 - **Never hand a `Scene` a freshly built `Binding` from a computed property.**

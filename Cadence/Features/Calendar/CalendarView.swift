@@ -690,15 +690,22 @@ private struct ResizeAffordance: View {
 final class CursorStack {
     static let shared = CursorStack()
 
-    private var pushed = false
+    private var pushed: NSCursor?
 
     func setResize(_ active: Bool) {
-        guard active != pushed else { return }
-        if active {
-            NSCursor.resizeUpDown.push()
-        } else {
-            NSCursor.pop()
-        }
-        pushed = active
+        set(active ? NSCursor.resizeUpDown : nil)
+    }
+
+    func setColumnResize(_ active: Bool) {
+        set(active ? NSCursor.resizeLeftRight : nil)
+    }
+
+    /// One push outstanding at a time, so the stack cannot drift however hover
+    /// events happen to interleave.
+    private func set(_ cursor: NSCursor?) {
+        guard cursor !== pushed else { return }
+        if pushed != nil { NSCursor.pop() }
+        cursor?.push()
+        pushed = cursor
     }
 }

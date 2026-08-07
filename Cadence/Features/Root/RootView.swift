@@ -101,11 +101,10 @@ struct RootView: View {
             CalendarView()
         case .split:
             // Planning mode: drag from the list on the left onto the grid.
-            HSplitView {
+            PaneSplit(storageKey: "splitLeadingWidth") {
                 TodoListView()
-                    .frame(minWidth: 280, idealWidth: 380)
+            } trailing: {
                 CalendarView()
-                    .frame(minWidth: 420)
             }
         }
     }

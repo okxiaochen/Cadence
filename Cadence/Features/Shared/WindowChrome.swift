@@ -76,11 +76,16 @@ private struct MatchSidebarMaterial: NSViewRepresentable {
             var ancestor = view.superview
             while let current = ancestor {
                 if let effect = current as? NSVisualEffectView {
-                    effect.material = appearance.isTranslucent
-                        ? appearance.material
-                        : .windowBackground
-                    // `.followsWindowActiveState` dims the sidebar when the
-                    // window loses focus, which reintroduces the mismatch.
+                    // Solid means one flat colour everywhere, so the sidebar's
+                    // own effect view must stop drawing rather than paint a
+                    // near-miss of the window colour over it.
+                    effect.isHidden = !appearance.isTranslucent
+                    effect.material = appearance.material
+                    // Never pin an appearance: inheriting from the window is
+                    // what keeps light and dark mode working.
+                    effect.appearance = nil
+                    // Otherwise the sidebar dims when the window loses focus
+                    // and the mismatch is back whenever the app is not front.
                     effect.state = .active
                     return
                 }
@@ -133,7 +138,9 @@ struct BackgroundAppearance: Equatable {
         case .solid: .windowBackground
         case .frosted: .underWindowBackground
         case .vibrant: .sidebar
-        case .glass: .hudWindow
+        // Not `.hudWindow`: that one forces a dark appearance whatever the
+        // system is set to, and it is applied to views we do not own.
+        case .glass: .fullScreenUI
         }
     }
 
