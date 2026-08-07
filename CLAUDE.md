@@ -97,8 +97,10 @@ Two hazards there, both already paid for:
   the material is applied to a view we do not own. Never pin `appearance` on
   those views either — inheriting is what keeps light/dark working.
 - The split view's sidebar column has its own `NSVisualEffectView` beneath the
-  `List`. In solid mode it must be **hidden**, not repainted: `.windowBackground`
-  as a *material* is a near-miss of `windowBackgroundColor` and the seam shows.
+  `List`. Repainting it with the `.windowBackground` *material* is a near-miss
+  of `windowBackgroundColor` and the seam shows — but **do not hide it**, since
+  hiding an effect view takes its whole subtree with it and the sidebar's list
+  is one of its subviews. Cover it with a colour behind the content instead.
 
 ## SwiftUI traps already hit here
 

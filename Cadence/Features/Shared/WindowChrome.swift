@@ -76,10 +76,6 @@ private struct MatchSidebarMaterial: NSViewRepresentable {
             var ancestor = view.superview
             while let current = ancestor {
                 if let effect = current as? NSVisualEffectView {
-                    // Solid means one flat colour everywhere, so the sidebar's
-                    // own effect view must stop drawing rather than paint a
-                    // near-miss of the window colour over it.
-                    effect.isHidden = !appearance.isTranslucent
                     effect.material = appearance.material
                     // Never pin an appearance: inheriting from the window is
                     // what keeps light and dark mode working.
@@ -97,7 +93,16 @@ private struct MatchSidebarMaterial: NSViewRepresentable {
 
 extension View {
     func matchesWindowMaterial(_ appearance: BackgroundAppearance) -> some View {
-        background(MatchSidebarMaterial(appearance: appearance))
+        // In solid mode the material is *covered*, not hidden: hiding an
+        // NSVisualEffectView takes its whole subtree with it, and the sidebar's
+        // list is one of its subviews. A colour behind the content sits above
+        // the material and below everything that matters.
+        background {
+            if !appearance.isTranslucent {
+                Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
+            }
+        }
+        .background(MatchSidebarMaterial(appearance: appearance))
     }
 }
 
@@ -169,4 +174,38 @@ enum BackgroundStyle: String, CaseIterable, Identifiable {
 
 private extension Double {
     func clamped() -> Double { min(1, max(0, self)) }
+}
+
+// MARK: - Light / dark
+
+/// Whether the app follows the system appearance or pins one.
+///
+/// Applied to `NSApp` rather than to a view: a SwiftUI `.preferredColorScheme`
+/// reaches the view tree but leaves the titlebar, menus and every panel we open
+/// on the system setting, which looks broken rather than deliberate.
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+    }
+
+    @MainActor
+    func apply() {
+        NSApp.appearance = nsAppearance
+    }
 }

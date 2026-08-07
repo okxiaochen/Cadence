@@ -504,6 +504,13 @@ private struct AppearanceSettings: View {
         @Bindable var preferences = preferences
 
         Form {
+            Section("Appearance") {
+                Picker("Theme", selection: $preferences.appAppearance) {
+                    ForEach(AppAppearance.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+            }
+
             Section("Window background") {
                 Picker("Style", selection: $preferences.backgroundStyle) {
                     ForEach(BackgroundStyle.allCases) { Text($0.title).tag($0) }

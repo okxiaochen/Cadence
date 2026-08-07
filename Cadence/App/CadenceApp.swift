@@ -48,6 +48,7 @@ struct CadenceApp: App {
                 .environment(updater)
                 .environment(notifications)
                 .task {
+                    preferences.appAppearance.apply()
                     if let startupError { model.errorMessage = startupError }
                     await notifications.refreshAuthorization()
                     await updater.checkInBackground()

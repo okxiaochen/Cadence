@@ -24,6 +24,9 @@ final class Preferences {
             rawValue: defaults.string(forKey: Key.backgroundStyle) ?? ""
         ) ?? .solid
         backgroundOpacity = defaults.double(forKey: Key.backgroundOpacity, default: 0.7)
+        appAppearance = AppAppearance(
+            rawValue: defaults.string(forKey: Key.appearance) ?? ""
+        ) ?? .system
     }
 
     // MARK: - Planning
@@ -63,6 +66,13 @@ final class Preferences {
         didSet { defaults.set(backgroundOpacity, forKey: Key.backgroundOpacity) }
     }
 
+    var appAppearance: AppAppearance {
+        didSet {
+            defaults.set(appAppearance.rawValue, forKey: Key.appearance)
+            appAppearance.apply()
+        }
+    }
+
     var background: BackgroundAppearance {
         BackgroundAppearance(style: backgroundStyle, opacity: backgroundOpacity)
     }
@@ -98,6 +108,7 @@ final class Preferences {
         static let hiddenCalendars = "hiddenCalendarIDs"
         static let backgroundStyle = "backgroundStyle"
         static let backgroundOpacity = "backgroundOpacity"
+        static let appearance = "appAppearance"
     }
 }
 

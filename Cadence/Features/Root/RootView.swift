@@ -53,12 +53,10 @@ struct RootView: View {
             .safeAreaInset(edge: .top, spacing: 0) { UpdateBanner() }
         }
         .frame(minWidth: 900, minHeight: 560)
-        // Hidden so the window material reaches the toolbar too; otherwise the
-        // top of the window stays opaque while everything below it is glass.
-        .toolbarBackground(
-            preferences.background.isTranslucent ? .hidden : .automatic,
-            for: .windowToolbar
-        )
+        // Always hidden. The toolbar's own material is a different shade from
+        // the window in every mode, and it is the one band that spans the full
+        // width, so the mismatch is the first thing the eye finds.
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .windowBackground(preferences.background)
         .onAppear {
             model.undoManager = undoManager
