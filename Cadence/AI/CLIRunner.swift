@@ -42,7 +42,7 @@ final class CLIRunner {
     }
 
     func run(
-        executable: URL,
+        invocation: CLIInvocation,
         arguments: [String],
         workingDirectory: URL?,
         stdin: String? = nil,
@@ -51,8 +51,30 @@ final class CLIRunner {
     ) async throws -> CLIResult {
         let started = Date()
         let process = Process()
-        process.executableURL = executable
-        process.arguments = arguments
+
+        switch invocation {
+        case .executable(let url):
+            process.executableURL = url
+            process.arguments = arguments
+
+        case .loginShell(let command, let shell):
+            // Interactive login, so functions and aliases from the rc files
+            // exist. Everything is quoted rather than interpolated — a task
+            // title containing a quote would otherwise rewrite the command.
+            // The command is left unquoted and every argument is quoted. A
+            // quoted word is never alias-expanded, so quoting the command name
+            // silently breaks anyone whose wrapper is an alias; the arguments
+            // carry user text and must be quoted, or a task title containing a
+            // quote would rewrite the command.
+            let line = ([command] + arguments.map(CLILocator.shellQuoted))
+                .joined(separator: " ")
+            process.executableURL = shell
+            // `eval`, because zsh parses the whole `-c` string before the rc
+            // files have defined anything, and alias expansion happens at parse
+            // time. `eval` re-parses once they exist.
+            process.arguments = ["-ilc", "eval \(CLILocator.shellQuoted(line))"]
+        }
+
         if let workingDirectory { process.currentDirectoryURL = workingDirectory }
 
         // A GUI app's environment is threadbare; give the CLI a usable PATH.
@@ -62,7 +84,7 @@ final class CLIRunner {
             .joined(separator: ":")
         process.environment = environment
 
-        lastCommandLine = ([executable.path] + arguments)
+        lastCommandLine = ([invocation.displayPath] + arguments)
             .map { $0.contains(" ") ? "\"\($0)\"" : $0 }
             .joined(separator: " ")
 

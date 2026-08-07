@@ -38,6 +38,23 @@ struct CLIConfiguration: Codable, Equatable {
     }
 }
 
+/// How a configured command will actually be run.
+enum CLIInvocation: Equatable {
+    /// A real executable we located on disk. Run directly — no shell involved.
+    case executable(URL)
+    /// Anything a shell knows about but the filesystem does not: an alias, a
+    /// shell function, or a binary on a `PATH` that only exists inside the
+    /// user's rc files. Run through their login shell.
+    case loginShell(command: String, shell: URL)
+
+    var displayPath: String {
+        switch self {
+        case .executable(let url): url.path
+        case .loginShell(let command, let shell): "\(shell.lastPathComponent) -ilc \u{22}\(command) …\u{22}"
+        }
+    }
+}
+
 /// Finds the CLI binary on disk.
 ///
 /// A GUI app does not inherit the shell's `PATH`, so looking up a bare command
@@ -96,12 +113,61 @@ enum CLILocator {
         throw LocateError.notFound(trimmed)
     }
 
+    /// How to run `command`, falling back to the user's shell for anything the
+    /// filesystem cannot resolve.
+    ///
+    /// Wrappers are commonly an alias or a shell function rather than a file —
+    /// `command -v` answers with `alias foo='…'` or just the name, neither of
+    /// which is executable — and plenty of installs put the binary on a `PATH`
+    /// exported from `.zshrc`. All of those work in a terminal and none of them
+    /// resolve to a file, so a shell has to do it.
+    static func invocation(for command: String) throws -> CLIInvocation {
+        let trimmed = command.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { throw LocateError.notFound(command) }
+
+        if let url = try? resolve(trimmed) { return .executable(url) }
+
+        let shell = URL(fileURLWithPath:
+            ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
+        guard shellKnows(trimmed, shell: shell) else {
+            throw LocateError.notFound(trimmed)
+        }
+        return .loginShell(command: trimmed, shell: shell)
+    }
+
+    /// Interactive *and* login: `zsh -lc` alone does not read `.zshrc`, which is
+    /// where most people put their `PATH` and every alias they have.
+    private static func shellKnows(_ command: String, shell: URL) -> Bool {
+        let process = Process()
+        process.executableURL = shell
+        // `-v` alone misses aliases for the same parse-order reason `eval`
+        // exists in the runner, so ask about all three kinds explicitly.
+        let probe = "command -v \(shellQuoted(command)) >/dev/null 2>&1"
+            + " || alias \(shellQuoted(command)) >/dev/null 2>&1"
+            + " || typeset -f \(shellQuoted(command)) >/dev/null 2>&1"
+        process.arguments = ["-ilc", probe]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    /// Single-quoted for a shell, with embedded quotes escaped.
+    static func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     /// Last resort: a login shell knows about version managers and custom paths.
     private static func askLoginShell(for command: String) throws -> URL? {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
-        process.arguments = ["-lc", "command -v \(command)"]
+        process.arguments = ["-ilc", "command -v \(command)"]
 
         let pipe = Pipe()
         process.standardOutput = pipe

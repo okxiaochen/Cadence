@@ -197,12 +197,32 @@ private struct AISettings: View {
                     if isTesting { ProgressView().controlSize(.small) }
                 }
 
+                if let invocation = session.resolvedInvocation {
+                    LabeledContent("Resolved") {
+                        Text(invocation.displayPath)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .lineLimit(2)
+                    }
+                }
+
                 if let testResult {
                     Text(testResult)
                         .font(.caption)
                         .foregroundStyle(session.configurationProblem == nil ? Color.secondary : Color.red)
                         .textSelection(.enabled)
                 }
+            }
+
+            Section("Wrappers") {
+                Text("A command that is an alias, a shell function, or on a PATH "
+                     + "set in your shell's rc files is run through a login shell, "
+                     + "so anything that works in Terminal works here. Whatever "
+                     + "you configure must still accept the flags Cadence adds "
+                     + "— --mcp-config, --output-format and --append-system-prompt "
+                     + "— so a wrapper that drops unknown flags will fail.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Privacy") {

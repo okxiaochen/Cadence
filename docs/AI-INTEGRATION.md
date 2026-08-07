@@ -274,10 +274,32 @@ Timeout      [ 120 ] seconds
              [ Test connection ]   ● Ready — claude 2.x
 ```
 
-- **Detect** searches `PATH`, `~/.local/bin`, `/opt/homebrew/bin`.
-  ⚠️ A GUI app's `PATH` is not the shell's `PATH`; resolve the binary to an
-  absolute path and, if needed, run through a login shell to pick up the user's
-  environment.
+- **Detect** searches `PATH`, `~/.local/bin`, `/opt/homebrew/bin` and the other
+  usual install locations. Anything it cannot resolve to an executable file is
+  run through the user's **login shell** instead, which covers the three shapes
+  a custom wrapper usually takes:
+
+  | Shape | Why the file lookup misses it |
+  |---|---|
+  | Shell alias | `command -v` answers `alias foo='…'`, not a path |
+  | Shell function | `command -v` answers with the bare name |
+  | Binary on a `PATH` from `.zshrc` | A GUI app never sees that `PATH` |
+
+  Three details make that work, each of which silently breaks it if missed:
+
+  - The shell is started `-ilc`, not `-lc`. `.zshrc` is only read by
+    *interactive* shells, and that is where people put `PATH` and every alias.
+  - The command line is wrapped in `eval`. zsh parses the whole `-c` string
+    before the rc files have defined anything, and alias expansion happens at
+    parse time.
+  - The **command name is left unquoted** while every argument is quoted. A
+    quoted word is never alias-expanded, so quoting the command breaks aliases;
+    the arguments carry task titles and must be quoted, or an apostrophe would
+    rewrite the command.
+
+  A wrapper still has to accept the flags Cadence adds — `--mcp-config`,
+  `--output-format`, `--append-system-prompt` — so one that drops unknown flags
+  will fail no matter how it is resolved.
 - **Test connection** runs a trivial prompt with one read tool and reports
   round-trip time and whether MCP tools were reachable.
 - **Run history** lists past `ai_run` rows with prompt, argv, duration, applied

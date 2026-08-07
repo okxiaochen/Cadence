@@ -51,11 +51,15 @@ final class AgentSession {
 
     // MARK: - Configuration
 
+    /// How the configured command resolved, for Settings to report.
+    private(set) var resolvedInvocation: CLIInvocation?
+
     func checkConfiguration() {
         do {
-            _ = try CLILocator.resolve(configuration.command)
+            resolvedInvocation = try CLILocator.invocation(for: configuration.command)
             configurationProblem = nil
         } catch {
+            resolvedInvocation = nil
             configurationProblem = error.localizedDescription
         }
     }
@@ -63,10 +67,10 @@ final class AgentSession {
     /// Runs a trivial prompt to prove the whole path works end to end.
     func testConnection() async -> String {
         do {
-            let executable = try CLILocator.resolve(configuration.command)
+            let invocation = try CLILocator.invocation(for: configuration.command)
             let started = Date()
             let result = try await runner.run(
-                executable: executable,
+                invocation: invocation,
                 arguments: configuration.arguments + ["Reply with the single word: ready"],
                 workingDirectory: URL(fileURLWithPath: configuration.workingDirectory),
                 timeoutSeconds: min(60, configuration.timeoutSeconds)
@@ -113,7 +117,7 @@ final class AgentSession {
         var run = AIRun(surface: surface.rawValue, prompt: prompt, command: "")
 
         do {
-            let executable = try CLILocator.resolve(configuration.command)
+            let invocation = try CLILocator.invocation(for: configuration.command)
 
             let catalog = ToolCatalog(
                 database: model.database,
@@ -130,12 +134,12 @@ final class AgentSession {
             defer { try? FileManager.default.removeItem(at: configURL) }
 
             let arguments = buildArguments(prompt: prompt, surface: surface, configURL: configURL)
-            run.command = ([executable.path] + arguments).joined(separator: " ")
+            run.command = ([invocation.displayPath] + arguments).joined(separator: " ")
             commandLine = run.command
             persist(run)
 
             let result = try await runner.run(
-                executable: executable,
+                invocation: invocation,
                 arguments: arguments,
                 workingDirectory: URL(fileURLWithPath: configuration.workingDirectory),
                 timeoutSeconds: configuration.timeoutSeconds,

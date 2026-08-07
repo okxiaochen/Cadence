@@ -138,7 +138,10 @@ finds it far faster than reading the code.
   trustworthy.
 - `AI/` — local MCP server over loopback with a per-run bearer token. Task
   writes are `propose_*`, staged and reviewed. Memory writes land directly and
-  self-correct via a stable key.
+  self-correct via a stable key. A configured command that is not an executable
+  file (an alias, a shell function, a `PATH` from `.zshrc`) is run through
+  `zsh -ilc` with the command bare, the arguments quoted, and the whole line
+  under `eval` — see `docs/AI-INTEGRATION.md` §7 for why each part is needed.
 - `Calendar/` — EventKit. Read as busy time; published to a dedicated calendar
   that **cannot be made read-only** (no such API), so the database wins and
   every reconcile overwrites.
