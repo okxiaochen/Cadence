@@ -92,15 +92,19 @@ private struct MatchSidebarMaterial: NSViewRepresentable {
 }
 
 extension View {
+    /// Gives the sidebar exactly the treatment the window gets: the same
+    /// material, and the same wash of window colour over it.
+    ///
+    /// Setting only the material left the sidebar showing far more of the
+    /// desktop than the rest of the window, because the wash is what most of
+    /// the opacity comes from. The material is *covered* rather than hidden —
+    /// hiding an `NSVisualEffectView` takes its whole subtree with it, and the
+    /// sidebar's list is one of its subviews.
     func matchesWindowMaterial(_ appearance: BackgroundAppearance) -> some View {
-        // In solid mode the material is *covered*, not hidden: hiding an
-        // NSVisualEffectView takes its whole subtree with it, and the sidebar's
-        // list is one of its subviews. A colour behind the content sits above
-        // the material and below everything that matters.
         background {
-            if !appearance.isTranslucent {
-                Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
-            }
+            Color(nsColor: .windowBackgroundColor)
+                .opacity(appearance.isTranslucent ? appearance.washOpacity : 1)
+                .ignoresSafeArea()
         }
         .background(MatchSidebarMaterial(appearance: appearance))
     }
@@ -174,6 +178,37 @@ enum BackgroundStyle: String, CaseIterable, Identifiable {
 
 private extension Double {
     func clamped() -> Double { min(1, max(0, self)) }
+}
+
+/// Quietens the divider AppKit draws between the split view's columns.
+///
+/// `NSSplitView` paints it itself and exposes no colour, so the only lever is
+/// the style. `.thin` is a hairline that takes the window's separator colour,
+/// which is far less assertive than the default once the two sides share a
+/// background.
+struct QuietSplitDivider: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        apply(from: view)
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        apply(from: view)
+    }
+
+    private func apply(from view: NSView) {
+        DispatchQueue.main.async {
+            var ancestor = view.superview
+            while let current = ancestor {
+                if let split = current as? NSSplitView {
+                    split.dividerStyle = .thin
+                    return
+                }
+                ancestor = current.superview
+            }
+        }
+    }
 }
 
 // MARK: - Light / dark

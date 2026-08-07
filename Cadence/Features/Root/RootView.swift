@@ -40,6 +40,7 @@ struct RootView: View {
         NavigationSplitView {
             SidebarView()
                 .matchesWindowMaterial(preferences.background)
+                .background(QuietSplitDivider())
         } detail: {
             HStack(spacing: 0) {
                 detail
