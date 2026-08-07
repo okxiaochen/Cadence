@@ -26,13 +26,24 @@ struct CaptureField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             field
-
-            if let completion, isFocused, !completion.matches.isEmpty {
-                suggestions(completion)
-            } else if !chips.isEmpty {
-                chipRow
+            if !chips.isEmpty { chipRow }
+        }
+        // Anchored above the field, because the composer sits at the bottom of
+        // the window and a list dropping downwards would fall off it.
+        .overlay(alignment: .bottomLeading) {
+            if let completion, isFocused, showsPopup(completion) {
+                SuggestionList(
+                    completion: completion,
+                    highlighted: highlighted,
+                    onPick: { accept(completion, $0) }
+                )
+                .offset(y: -34)
             }
         }
+    }
+
+    private func showsPopup(_ completion: Completion) -> Bool {
+        !completion.matches.isEmpty || completion.isNewTag
     }
 
     // MARK: - Field
@@ -75,38 +86,6 @@ struct CaptureField: View {
     }
 
     // MARK: - Suggestions
-
-    private func suggestions(_ completion: Completion) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(Array(completion.matches.enumerated()), id: \.offset) { index, match in
-                    Button {
-                        accept(completion, match)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Dot(colorHex: match.colorHex, size: 6)
-                            Text(match.name).font(.caption)
-                        }
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(
-                            index == highlighted ? AnyShapeStyle(.tint.opacity(0.25))
-                                                 : AnyShapeStyle(.quaternary),
-                            in: Capsule()
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                if completion.isNewTag {
-                    Text("↩ creates #\(completion.query)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-        }
-        .frame(height: 20)
-    }
 
     /// Replaces the partial token with the chosen name.
     private func accept(_ completion: Completion, _ match: Completion.Match) {
@@ -228,5 +207,54 @@ struct Completion {
             isNewTag: sigil == "#" && !query.isEmpty
                 && !candidates.contains { $0.name.lowercased() == query.lowercased() }
         )
+    }
+}
+
+// MARK: - The popup
+
+/// The floating completion list. A plain vertical menu, the way every other
+/// token field on the platform behaves.
+private struct SuggestionList: View {
+    var completion: Completion
+    var highlighted: Int
+    var onPick: (Completion.Match) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(completion.matches.enumerated()), id: \.offset) { index, match in
+                row(match, isHighlighted: index == highlighted)
+            }
+
+            if completion.isNewTag {
+                if !completion.matches.isEmpty { Divider() }
+                HStack(spacing: 6) {
+                    Image(systemName: "plus.circle").font(.caption)
+                    Text("Create #\(completion.query)").font(.callout)
+                    Spacer()
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+            }
+        }
+        .frame(width: 220, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+    }
+
+    private func row(_ match: Completion.Match, isHighlighted: Bool) -> some View {
+        HStack(spacing: 7) {
+            Dot(colorHex: match.colorHex, size: 7)
+            Text(match.name).font(.callout).lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(isHighlighted ? Color.accentColor.opacity(0.25) : .clear)
+        .contentShape(Rectangle())
+        .onTapGesture { onPick(match) }
     }
 }

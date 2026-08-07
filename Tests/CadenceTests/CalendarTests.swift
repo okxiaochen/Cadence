@@ -337,4 +337,46 @@ final class CalendarTests: XCTestCase {
         XCTAssertGreaterThan(wide.width, narrow.width)
         XCTAssertEqual(wide.minX, narrow.minX)
     }
+
+    // MARK: - Which drag a press starts
+
+    func testGrabbingTheMiddleMovesTheBlock() {
+        XCTAssertEqual(CalendarView.mode(for: 30, height: 60), .move)
+    }
+
+    func testGrabbingAnEdgeResizes() {
+        // Zone is height/3 capped at 12: a 60pt block gets 12pt at each end.
+        XCTAssertEqual(CalendarView.mode(for: 2, height: 60), .resizeStart)
+        XCTAssertEqual(CalendarView.mode(for: 58, height: 60), .resizeEnd)
+    }
+
+    func testATallBlockDoesNotGiveAThirdOfItselfToResizing() {
+        // 300pt tall: the zone is capped, so most of it still moves.
+        XCTAssertEqual(CalendarView.resizeZone(forHeight: 300), 12)
+        XCTAssertEqual(CalendarView.mode(for: 40, height: 300), .move)
+    }
+
+    func testAShortBlockIsAllMoveRatherThanAllEdge() {
+        // Below the threshold two edge zones would meet and leave nothing to
+        // drag the block by, so it just moves; Duration resizes it instead.
+        XCTAssertEqual(CalendarView.resizeZone(forHeight: 9), 0)
+        XCTAssertEqual(CalendarView.mode(for: 0, height: 9), .move)
+        XCTAssertEqual(CalendarView.mode(for: 8, height: 9), .move)
+    }
+
+    func testAtThresholdBothEdgesAndAMiddleExist() {
+        let height = CalendarView.minimumResizableHeight
+        XCTAssertEqual(CalendarView.mode(for: 1, height: height), .resizeStart)
+        XCTAssertEqual(CalendarView.mode(for: height / 2, height: height), .move)
+        XCTAssertEqual(CalendarView.mode(for: height - 1, height: height), .resizeEnd)
+    }
+
+    func testTheZoneNeverSwallowsTheWholeBlock() {
+        // Otherwise a block could become impossible to move at all.
+        for height in stride(from: 3.0, through: 400.0, by: 1.0) {
+            let zone = CalendarView.resizeZone(forHeight: height)
+            guard zone > 0 else { continue }
+            XCTAssertLessThan(zone * 2, height, "no middle left at \(height)pt")
+        }
+    }
 }

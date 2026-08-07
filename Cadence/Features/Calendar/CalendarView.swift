@@ -7,6 +7,7 @@ struct CalendarView: View {
     @Environment(AgentSession.self) private var session
 
     @State private var drag: ActiveDrag?
+    @State private var hover: HoverState?
     @State private var didScrollToStart = false
     @State private var isDropTargeted = false
 
@@ -31,7 +32,10 @@ struct CalendarView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { model.refreshBusyEvents() }
         .onDeleteCommand { deleteSelectedBlock() }
+        // Focusable so ⌫ reaches onDeleteCommand, but a focus ring drawn around
+        // the whole calendar is just noise.
         .focusable()
+        .focusEffectDisabled()
     }
 
     // MARK: - Header
@@ -199,16 +203,20 @@ struct CalendarView: View {
         .simultaneousGesture(
             TapGesture(count: 2).onEnded { model.inspectedID = positioned.block.todo.id }
         )
-        .gesture(moveGesture(positioned, geometry: geometry))
-        .overlay(alignment: .top) {
-            // A short block has no room for a top handle without swallowing the
-            // whole thing; resize it from the bottom instead.
-            if rect.height >= 28 {
-                resizeHandle(positioned, geometry: geometry, edge: .start, blockHeight: rect.height)
-            }
+        .gesture(blockGesture(positioned, geometry: geometry, rect: rect))
+        .overlay {
+            ResizeAffordance(height: rect.height, hovering: hoverMode(for: positioned.id))
         }
-        .overlay(alignment: .bottom) {
-            resizeHandle(positioned, geometry: geometry, edge: .end, blockHeight: rect.height)
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let point):
+                hover = HoverState(
+                    blockID: positioned.id,
+                    mode: Self.mode(for: point.y, height: rect.height)
+                )
+            case .ended:
+                if hover?.blockID == positioned.id { hover = nil }
+            }
         }
         .contextMenu {
             Button("Show Details…") { model.inspectedID = positioned.block.todo.id }
@@ -256,86 +264,105 @@ struct CalendarView: View {
 
     // MARK: - Gestures
 
-    private func moveGesture(_ positioned: PositionedBlock, geometry: CalendarGeometry) -> some Gesture {
-        DragGesture(minimumDistance: 3, coordinateSpace: .named(Self.gridSpace))
+    /// Move and resize in a single gesture, chosen by where the press landed.
+    ///
+    /// Two overlapping gestures — one on the block, one on an edge handle —
+    /// never arbitrated reliably: the block's own drag kept winning, so the
+    /// edge moved the whole block instead of resizing it. Deciding from the
+    /// start position removes the contest altogether.
+    private func blockGesture(
+        _ positioned: PositionedBlock,
+        geometry: CalendarGeometry,
+        rect: CGRect
+    ) -> some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .named(Self.gridSpace))
             .onChanged { value in
                 let original = positioned.block.interval
-                let current = drag?.blockID == positioned.id
-                    ? drag!
-                    : ActiveDrag(
+                let existing = drag?.blockID == positioned.id ? drag : nil
+                let mode = existing?.mode
+                    ?? Self.mode(for: value.startLocation.y - rect.minY, height: rect.height)
+                let minimum = TimeInterval(max(5, snap) * 60)
+
+                switch mode {
+                case .move:
+                    let grabOffset = existing?.grabOffset
+                        ?? (value.startLocation.y - geometry.y(for: original.start))
+                    let target = geometry.date(
+                        at: CGPoint(x: value.location.x, y: value.location.y - grabOffset),
+                        snapMinutes: snap
+                    )
+                    drag = ActiveDrag(
                         blockID: positioned.id,
                         mode: .move,
-                        interval: original,
+                        interval: geometry.reposition(original, toStart: target),
                         isDuplicate: false,
-                        // Keep the point you grabbed under the cursor.
-                        grabOffset: value.startLocation.y - geometry.y(for: original.start)
+                        grabOffset: grabOffset
                     )
 
-                let target = geometry.date(
-                    at: CGPoint(x: value.location.x, y: value.location.y - current.grabOffset),
-                    snapMinutes: snap
-                )
-                var next = current
-                next.interval = geometry.reposition(original, toStart: target)
-                drag = next
-                model.selectedBlockID = positioned.id
+                case .resizeStart, .resizeEnd:
+                    // Locked to the block's own day: dragging an edge sideways
+                    // must not send it to another column.
+                    let edge = geometry.date(
+                        onDay: original.start,
+                        atY: value.location.y,
+                        snapMinutes: snap
+                    )
+                    var interval = original
+                    if mode == .resizeStart {
+                        interval.start = min(edge, original.end.addingTimeInterval(-minimum))
+                        interval.end = original.end
+                    } else {
+                        interval.end = max(edge, original.start.addingTimeInterval(minimum))
+                    }
+                    drag = ActiveDrag(
+                        blockID: positioned.id,
+                        mode: mode,
+                        interval: interval,
+                        isDuplicate: false,
+                        grabOffset: 0
+                    )
+                }
             }
             .onEnded { _ in
                 defer { drag = nil }
                 guard let finished = drag, finished.blockID == positioned.id,
                       finished.interval != positioned.block.interval else { return }
-                model.setBlockInterval(positioned.id, to: finished.interval)
+                model.setBlockInterval(
+                    positioned.id,
+                    to: finished.interval,
+                    actionName: finished.mode == .move ? "Move Block" : "Resize Block"
+                )
             }
     }
 
-    private enum Edge { case start, end }
+    struct HoverState: Equatable {
+        var blockID: String
+        var mode: ActiveDrag.Mode
+    }
 
-    @ViewBuilder
-    private func resizeHandle(
-        _ positioned: PositionedBlock,
-        geometry: CalendarGeometry,
-        edge: Edge,
-        blockHeight: CGFloat
-    ) -> some View {
-        ResizeHandle(height: min(10, max(5, blockHeight / 3)))
-            // High priority, or the block's own move gesture wins the
-            // arbitration and the edge drags the whole block instead.
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 2, coordinateSpace: .named(Self.gridSpace))
-                    .onChanged { value in
-                        let original = positioned.block.interval
-                        // Locked to the block's own day: dragging an edge
-                        // sideways must not send it to another column.
-                        let edgeDate = geometry.date(
-                            onDay: original.start,
-                            atY: value.location.y,
-                            snapMinutes: snap
-                        )
-                        let minimum = TimeInterval(max(5, snap) * 60)
+    private func hoverMode(for blockID: String) -> ActiveDrag.Mode? {
+        hover?.blockID == blockID ? hover?.mode : nil
+    }
 
-                        var interval = original
-                        switch edge {
-                        case .start:
-                            interval.start = min(edgeDate, original.end.addingTimeInterval(-minimum))
-                            interval.end = original.end
-                        case .end:
-                            interval.end = max(edgeDate, original.start.addingTimeInterval(minimum))
-                        }
-                        drag = ActiveDrag(
-                            blockID: positioned.id,
-                            mode: edge == .start ? .resizeStart : .resizeEnd,
-                            interval: interval,
-                            isDuplicate: false,
-                            grabOffset: 0
-                        )
-                    }
-                    .onEnded { _ in
-                        defer { drag = nil }
-                        guard let finished = drag, finished.blockID == positioned.id,
-                              finished.interval != positioned.block.interval else { return }
-                        model.setBlockInterval(positioned.id, to: finished.interval, actionName: "Resize Block")
-                    }
-            )
+    /// How much of each end of a block starts a resize rather than a move.
+    ///
+    /// Capped so a tall block does not devote a third of itself to resizing,
+    /// and zero below a threshold: on a very short block two edge zones would
+    /// meet in the middle and leave nothing to drag the block *by*. Those are
+    /// resized from the Duration menu instead.
+    static let minimumResizableHeight: CGFloat = 16
+
+    static func resizeZone(forHeight height: CGFloat) -> CGFloat {
+        guard height >= minimumResizableHeight else { return 0 }
+        return min(12, max(4, height / 3))
+    }
+
+    static func mode(for offsetY: CGFloat, height: CGFloat) -> ActiveDrag.Mode {
+        let zone = resizeZone(forHeight: height)
+        guard zone > 0 else { return .move }
+        if offsetY <= zone { return .resizeStart }
+        if offsetY >= height - zone { return .resizeEnd }
+        return .move
     }
 
     private func drop(_ ids: [String], at location: CGPoint, geometry: CalendarGeometry) {
@@ -626,43 +653,55 @@ private struct CurrentTimeIndicator: View {
     }
 }
 
-/// The drag target at a block's top and bottom edge.
+/// Shows where the resize zones are, and sets the cursor over them.
 ///
-/// `NSCursor.push()/pop()` in an `onHover` is a trap: hover enter and exit do
-/// not always pair, and an unbalanced pop corrupts the cursor stack for the
-/// whole app. This tracks its own push instead.
-private struct ResizeHandle: View {
+/// Deliberately not hit-testable: an overlay that can be hit is what stopped
+/// the resize working twice before. The block reports hover position and the
+/// zone is computed with the same maths the gesture uses, so what is shown and
+/// what happens cannot disagree.
+private struct ResizeAffordance: View {
     var height: CGFloat
-
-    @State private var isHovering = false
-    @State private var hasPushedCursor = false
+    var hovering: ActiveDrag.Mode?
 
     var body: some View {
-        Color.clear
-            .frame(height: height)
-            .contentShape(Rectangle())
-            .overlay {
-                if isHovering {
-                    Capsule()
-                        .fill(.primary.opacity(0.55))
-                        .frame(width: 18, height: 3)
-                }
-            }
-            .onHover { inside in
-                isHovering = inside
-                if inside, !hasPushedCursor {
-                    NSCursor.resizeUpDown.push()
-                    hasPushedCursor = true
-                } else if !inside, hasPushedCursor {
-                    NSCursor.pop()
-                    hasPushedCursor = false
-                }
-            }
-            .onDisappear {
-                if hasPushedCursor {
-                    NSCursor.pop()
-                    hasPushedCursor = false
-                }
-            }
+        VStack(spacing: 0) {
+            grip(visible: hovering == .resizeStart)
+            Spacer(minLength: 0)
+            if height >= 24 { grip(visible: hovering == .resizeEnd) }
+        }
+        .allowsHitTesting(false)
+        .onChange(of: hovering) { _, mode in
+            CursorStack.shared.setResize(mode == .resizeStart || mode == .resizeEnd)
+        }
+        .onDisappear { CursorStack.shared.setResize(false) }
+    }
+
+    private func grip(visible: Bool) -> some View {
+        Capsule()
+            .fill(.primary.opacity(visible ? 0.55 : 0))
+            .frame(width: 18, height: 3)
+            .frame(maxWidth: .infinity, minHeight: CalendarView.resizeZone(forHeight: height))
+    }
+}
+
+/// One place that owns the resize cursor.
+///
+/// `NSCursor.push()/pop()` from a view is a trap: hover enter and exit do not
+/// always pair, and an unbalanced pop corrupts the cursor stack for the whole
+/// app. A single owner tracking one boolean cannot get out of step.
+@MainActor
+final class CursorStack {
+    static let shared = CursorStack()
+
+    private var pushed = false
+
+    func setResize(_ active: Bool) {
+        guard active != pushed else { return }
+        if active {
+            NSCursor.resizeUpDown.push()
+        } else {
+            NSCursor.pop()
+        }
+        pushed = active
     }
 }
