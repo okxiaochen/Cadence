@@ -52,6 +52,13 @@ struct RootView: View {
             .safeAreaInset(edge: .top, spacing: 0) { UpdateBanner() }
         }
         .frame(minWidth: 900, minHeight: 560)
+        // Hidden so the window material reaches the toolbar too; otherwise the
+        // top of the window stays opaque while everything below it is glass.
+        .toolbarBackground(
+            preferences.background.isTranslucent ? .hidden : .automatic,
+            for: .windowToolbar
+        )
+        .windowBackground(preferences.background)
         .onAppear {
             model.undoManager = undoManager
             model.publishToCalendar()

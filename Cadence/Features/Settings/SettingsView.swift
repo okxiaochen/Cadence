@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
+            AppearanceSettings()
+                .tabItem { Label("Appearance", systemImage: "paintbrush") }
             PlanningSettings()
                 .tabItem { Label("Planning", systemImage: "clock") }
             CalendarSettings()
@@ -490,5 +492,50 @@ private struct NotificationSettings: View {
         .onChange(of: notifications.leadTimeMinutes) { _, _ in
             Task { await notifications.reschedule(from: model.agendaItems) }
         }
+    }
+}
+
+// MARK: - Appearance
+
+private struct AppearanceSettings: View {
+    @Environment(Preferences.self) private var preferences
+
+    var body: some View {
+        @Bindable var preferences = preferences
+
+        Form {
+            Section("Window background") {
+                Picker("Style", selection: $preferences.backgroundStyle) {
+                    ForEach(BackgroundStyle.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+
+                if preferences.backgroundStyle != .solid {
+                    VStack(alignment: .leading, spacing: Metrics.tight) {
+                        Slider(value: $preferences.backgroundOpacity, in: 0...1) {
+                            Text("Opacity")
+                        } minimumValueLabel: {
+                            Image(systemName: "circle.dotted")
+                        } maximumValueLabel: {
+                            Image(systemName: "circle.fill")
+                        }
+
+                        Text("Left is clear glass, right is nearly solid. "
+                             + "The blur samples whatever is behind the window, "
+                             + "so how it reads depends on your wallpaper.")
+                            .font(Typography.rowMeta)
+                            .foregroundStyle(.secondaryText)
+                    }
+                }
+            }
+
+            Section {
+                Text("Translucency is decorative and costs a little performance. "
+                     + "Solid is the most legible over a busy desktop.")
+                    .font(Typography.rowMeta)
+                    .foregroundStyle(.secondaryText)
+            }
+        }
+        .formStyle(.grouped)
     }
 }

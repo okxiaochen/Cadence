@@ -20,12 +20,11 @@ struct CalendarView: View {
     var body: some View {
         VStack(spacing: 0) {
             CalendarHeaderBar()
-            Divider()
             if model.eventKit.access != .authorized {
                 calendarAccessBanner
             }
             dayHeaderRow
-            Divider()
+            Rectangle().fill(.hairline).frame(height: 1)
             grid
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -68,10 +67,12 @@ struct CalendarView: View {
     private var calendarAccessBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "calendar.badge.exclamationmark")
+                .foregroundStyle(.secondaryText)
             Text(model.eventKit.access == .denied
                  ? "Calendar access denied — enable it in System Settings › Privacy to see busy time."
                  : "Show your existing events as busy time?")
-                .font(.callout)
+                .font(Typography.rowMeta)
+                .foregroundStyle(.secondaryText)
             Spacer()
             if model.eventKit.access != .denied {
                 Button("Connect Calendar") {
@@ -83,9 +84,8 @@ struct CalendarView: View {
                 .controlSize(.small)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.yellow.opacity(0.12))
+        .padding(.horizontal, Metrics.comfortable)
+        .padding(.vertical, Metrics.snug)
     }
 
     // MARK: - Grid
@@ -417,8 +417,8 @@ private struct CalendarHeaderBar: View {
             bar(showsTitle: false, showsZoom: false)
         }
         .buttonStyle(.borderless)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, Metrics.comfortable)
+        .padding(.vertical, Metrics.regular)
     }
 
     private func bar(showsTitle: Bool, showsZoom: Bool) -> some View {
@@ -550,23 +550,16 @@ private struct DayBackgrounds: View {
         ZStack(alignment: .topLeading) {
             Rectangle()
                 .fill(Calendar.current.isDateInToday(day)
-                      ? Color.accentColor.opacity(0.04)
+                      ? Color.accentColor.opacity(0.05)
                       : Color.clear)
 
-            // Working hours read as the "live" part of the day.
-            if let hours = preferences.workingHours(on: day) {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.035))
-                    .frame(height: geometry.height(for: hours))
-                    .offset(y: geometry.y(for: hours.start))
-            }
 
             ForEach(model.busyEvents(on: day)) { event in
                 busyEvent(event)
             }
 
             Rectangle()
-                .fill(Color.primary.opacity(0.08))
+                .fill(Color.primary.opacity(0.045))
                 .frame(width: 1)
                 .frame(maxHeight: .infinity, alignment: .leading)
         }
@@ -596,7 +589,7 @@ private struct DayBackgrounds: View {
         VStack(spacing: 0) {
             ForEach(0..<24, id: \.self) { hour in
                 Rectangle()
-                    .fill(Color.primary.opacity(hour % 6 == 0 ? 0.12 : 0.06))
+                    .fill(Color.primary.opacity(hour % 6 == 0 ? 0.07 : 0.035))
                     .frame(height: 1)
                     .frame(maxWidth: .infinity, alignment: .top)
                     .frame(height: geometry.hourHeight, alignment: .top)

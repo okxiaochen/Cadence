@@ -68,3 +68,15 @@ struct DueBadge: View {
             .foregroundStyle(overdue ? Color.red : .secondary)
     }
 }
+
+extension Color {
+    /// A darkened or lightened version of a tint, for text sitting on a wash of
+    /// that same tint. A saturated hue at full strength is unreadable at 11pt
+    /// against a 16%-opacity fill of itself.
+    var textOnTint: Color {
+        Color(nsColor: NSColor(self).blended(
+            withFraction: 0.45,
+            of: NSColor.labelColor
+        ) ?? NSColor(self))
+    }
+}

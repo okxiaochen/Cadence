@@ -14,46 +14,32 @@ struct TodoRowView: View {
     private var todo: Todo { detail.todo }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: Metrics.regular) {
             if indent > 0 {
-                Spacer().frame(width: CGFloat(indent) * 18)
+                Spacer().frame(width: CGFloat(indent) * 20)
             }
 
-            Toggle(isOn: Binding(
-                get: { todo.isCompleted },
-                set: { _ in model.toggleCompleted(todo.id) }
-            )) {
-                EmptyView()
+            CircleCheckbox(
+                isOn: todo.isCompleted,
+                tint: detail.project.map { Color(hex: $0.colorHex) } ?? .accentColor
+            ) {
+                model.toggleCompleted(todo.id)
             }
-            .toggleStyle(.checkbox)
-            .labelsHidden()
+            // Baseline alignment would hang the circle off the text baseline.
+            .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 }
 
-            if editingID == todo.id {
-                TextField("Title", text: $draftTitle)
-                    .textFieldStyle(.plain)
-                    .focused($isEditing)
-                    .onSubmit(commit)
-                    .onChange(of: isEditing) { _, focused in if !focused { commit() } }
-            } else {
-                Text(todo.title)
-                    .strikethrough(todo.isCompleted)
-                    .foregroundStyle(todo.isCompleted ? .secondary : .primary)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                title
+                // A second line only when there is something to put on it, so
+                // a plain task stays a single tidy line.
+                if !secondary.isEmpty { secondaryLine }
             }
 
-            Spacer(minLength: 8)
-            trailingMetadata
+            Spacer(minLength: Metrics.regular)
 
-            Button {
-                model.inspectedID = todo.id
-            } label: {
-                Image(systemName: "info.circle")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(isHovering ? Color.secondary : Color.clear)
-            .help("Show details (⌘I)")
+            trailing
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 3)
         .contentShape(Rectangle())
         // `simultaneousGesture`, not `onTapGesture`: the row already carries a
         // drag source and the List's own selection gesture, and a plain tap
@@ -68,49 +54,127 @@ struct TodoRowView: View {
         }
     }
 
+    // MARK: - Title
+
     @ViewBuilder
-    private var trailingMetadata: some View {
-        HStack(spacing: 8) {
-            if !detail.children.isEmpty {
-                Text("\(detail.completedChildCount)/\(detail.children.count)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
+    private var title: some View {
+        if editingID == todo.id {
+            TextField("Title", text: $draftTitle)
+                .textFieldStyle(.plain)
+                .font(Typography.rowTitle)
+                .focused($isEditing)
+                .onSubmit(commit)
+                .onChange(of: isEditing) { _, focused in if !focused { commit() } }
+        } else {
+            Text(todo.title)
+                .font(Typography.rowTitle)
+                .strikethrough(todo.isCompleted, color: .secondaryText)
+                .foregroundStyle(todo.isCompleted ? .secondaryText : .primary)
+                .lineLimit(1)
+        }
+    }
 
-            if let symbol = todo.priority.symbolName {
-                Image(systemName: symbol)
-                    .font(.caption2)
-                    .foregroundStyle(todo.priority == .high ? Color.orange : .secondary)
-            }
+    // MARK: - Secondary line
 
-            ForEach(detail.tags.prefix(3)) { tag in
-                TagChip(tag: tag)
-            }
+    /// Context that explains the task but is not the task: where it lives, how
+    /// long it takes. Kept off the title line so scanning titles stays easy.
+    private var secondary: [SecondaryItem] {
+        var items: [SecondaryItem] = []
 
-            if let project = detail.project, indent == 0, !isViewingProject(project) {
-                HStack(spacing: 4) {
-                    Dot(colorHex: project.colorHex, size: 6)
-                    Text(project.name).font(.caption)
+        if let project = detail.project, indent == 0, !isViewingProject(project) {
+            items.append(.project(project))
+        }
+        for tag in detail.tags.prefix(3) {
+            items.append(.tag(tag))
+        }
+        if !detail.children.isEmpty {
+            items.append(.progress(detail.completedChildCount, detail.children.count))
+        }
+        if let estimate = todo.estimateMinutes, detail.blocks.isEmpty {
+            items.append(.estimate(estimate))
+        }
+        return items
+    }
+
+    private var secondaryLine: some View {
+        HStack(spacing: Metrics.regular) {
+            ForEach(secondary) { item in
+                switch item {
+                case .project(let project):
+                    HStack(spacing: Metrics.tight) {
+                        Dot(colorHex: project.colorHex, size: 6)
+                        Text(project.name)
+                    }
+                case .tag(let tag):
+                    Text("#\(tag.name)")
+                        .foregroundStyle(Color(hex: tag.colorHex))
+                case .progress(let done, let total):
+                    Text("\(done)/\(total)")
+                        .monospacedDigit()
+                case .estimate(let minutes):
+                    Text(Format.duration(minutes))
+                        .monospacedDigit()
                 }
-                .foregroundStyle(.secondary)
-            }
-
-            if let estimate = todo.estimateMinutes {
-                Text(Format.duration(estimate))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            if !detail.blocks.isEmpty, let first = detail.blocks.first {
-                Label(Format.time(first.startAt), systemImage: "clock")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let due = todo.dueAt {
-                DueBadge(date: due, isCompleted: todo.isCompleted)
             }
         }
+        .font(Typography.rowMeta)
+        .foregroundStyle(.secondaryText)
+        .lineLimit(1)
+    }
+
+    private enum SecondaryItem: Identifiable, Hashable {
+        case project(Project)
+        case tag(Tag)
+        case progress(Int, Int)
+        case estimate(Int)
+
+        var id: String {
+            switch self {
+            case .project(let project): "p\(project.id)"
+            case .tag(let tag): "t\(tag.id)"
+            case .progress(let done, let total): "c\(done)/\(total)"
+            case .estimate(let minutes): "e\(minutes)"
+            }
+        }
+    }
+
+    // MARK: - Trailing
+
+    /// When it happens, and priority. The two things worth aligning down the
+    /// right edge so a list can be scanned vertically.
+    @ViewBuilder
+    private var trailing: some View {
+        HStack(spacing: Metrics.regular) {
+            if let symbol = todo.priority.symbolName {
+                Image(systemName: symbol)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(todo.priority == .high ? Color.orange : .secondaryText)
+            }
+
+            if let block = detail.blocks.first {
+                Text(Format.time(block.startAt))
+                    .font(Typography.time)
+                    .foregroundStyle(.secondaryText)
+            } else if let due = todo.dueAt {
+                Text(Format.relativeDue(due))
+                    .font(Typography.time)
+                    .foregroundStyle(isOverdue(due) ? Color.red : .secondaryText)
+            }
+
+            Button {
+                model.inspectedID = todo.id
+            } label: {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(isHovering ? Color.secondaryText : Color.clear)
+            .help("Show details (⌘I)")
+        }
+    }
+
+    private func isOverdue(_ date: Date) -> Bool {
+        !todo.isCompleted && date < Calendar.current.startOfDay(for: Date())
     }
 
     // MARK: - Editing

@@ -15,7 +15,6 @@ struct TodoListView: View {
             } else {
                 list
             }
-            Divider()
             composer
         }
         .navigationTitle(navigationTitle)
@@ -43,6 +42,7 @@ struct TodoListView: View {
             }
         }
         .listStyle(.inset)
+        .scrollContentBackground(.hidden)
         .contextMenu(forSelectionType: String.self) { ids in
             contextMenu(for: Array(ids))
         }
@@ -52,17 +52,12 @@ struct TodoListView: View {
     /// moves it to that day, keeping whatever time it already had.
     @ViewBuilder
     private func sectionHeader(_ section: TodoSection) -> some View {
-        let header = HStack(spacing: 6) {
-            if let colorHex = section.colorHex { Dot(colorHex: colorHex) }
-            else if let symbol = section.symbolName { Image(systemName: symbol) }
-            Text(section.title)
-            Spacer()
-            if !section.items.isEmpty {
-                Text("\(section.items.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-            }
-        }
+        let header = SectionHeader(
+            title: section.title,
+            count: section.items.count,
+            symbolName: section.symbolName,
+            colorHex: section.colorHex
+        )
         .frame(maxWidth: .infinity, alignment: .leading)
 
         if let date = section.date {
@@ -75,18 +70,23 @@ struct TodoListView: View {
     @ViewBuilder
     private func rows(for section: TodoSection) -> some View {
         ForEach(section.items) { item in
+            // On macOS this has to be set per row; applied to the List it is
+            // quietly ignored and every row keeps its rule.
             TodoRowView(detail: item, editingID: $editingID, indent: 0)
                 .tag(item.id)
+                .listRowSeparator(.hidden)
 
             ForEach(item.children) { child in
                 TodoRowView(detail: child, editingID: $editingID, indent: 1)
                     .tag(child.id)
+                    .listRowSeparator(.hidden)
             }
         }
 
         if section.acceptsQuickAdd {
             SectionQuickAdd(date: section.date)
                 .selectionDisabled()
+                .listRowSeparator(.hidden)
         }
     }
 
@@ -120,9 +120,13 @@ struct TodoListView: View {
         CaptureField(contextChips: contextChips) { parsed in
             addTask(parsed)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.horizontal, Metrics.loose)
+        .padding(.vertical, Metrics.comfortable)
+        // A hairline, not a bar: one more filled surface is one more thing for
+        // the eye to account for, and it blocked the window material.
+        .overlay(alignment: .top) {
+            Rectangle().fill(.hairline).frame(height: 1)
+        }
     }
 
     /// What the current list will add for you, so it is visible before you
@@ -141,15 +145,17 @@ struct TodoListView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Metrics.regular) {
             Image(systemName: "checkmark.circle")
-                .font(.system(size: 36))
-                .foregroundStyle(.tertiary)
-            Text("Nothing here")
-                .font(.headline)
-            Text("Add a task below, or press ⌥Space anywhere.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(.quaternary)
+            VStack(spacing: Metrics.tight) {
+                Text("Nothing here")
+                    .font(.system(size: 14, weight: .medium))
+                Text("Add a task below, or press ⌥Space anywhere.")
+                    .font(Typography.rowMeta)
+                    .foregroundStyle(.tertiaryText)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

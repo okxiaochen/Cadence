@@ -20,6 +20,10 @@ final class Preferences {
         snapMinutes = defaults.integer(forKey: Key.snapMinutes, default: 15)
         storedHourHeight = min(200, max(24, defaults.double(forKey: Key.hourHeight, default: 48)))
         hiddenCalendarIDs = Set(defaults.stringArray(forKey: Key.hiddenCalendars) ?? [])
+        backgroundStyle = BackgroundStyle(
+            rawValue: defaults.string(forKey: Key.backgroundStyle) ?? ""
+        ) ?? .solid
+        backgroundOpacity = defaults.double(forKey: Key.backgroundOpacity, default: 0.7)
     }
 
     // MARK: - Planning
@@ -48,6 +52,20 @@ final class Preferences {
     }
 
     private var storedHourHeight: Double
+
+    // MARK: - Appearance
+
+    var backgroundStyle: BackgroundStyle {
+        didSet { defaults.set(backgroundStyle.rawValue, forKey: Key.backgroundStyle) }
+    }
+
+    var backgroundOpacity: Double {
+        didSet { defaults.set(backgroundOpacity, forKey: Key.backgroundOpacity) }
+    }
+
+    var background: BackgroundAppearance {
+        BackgroundAppearance(style: backgroundStyle, opacity: backgroundOpacity)
+    }
 
     /// Calendars the user has switched off in the busy overlay.
     var hiddenCalendarIDs: Set<String> {
@@ -78,6 +96,8 @@ final class Preferences {
         static let snapMinutes = "snapMinutes"
         static let hourHeight = "hourHeight"
         static let hiddenCalendars = "hiddenCalendarIDs"
+        static let backgroundStyle = "backgroundStyle"
+        static let backgroundOpacity = "backgroundOpacity"
     }
 }
 

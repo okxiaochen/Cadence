@@ -17,20 +17,25 @@ struct SidebarView: View {
         )) {
             Section {
                 ForEach(SmartList.allCases) { list in
-                    Label(list.title, systemImage: list.symbolName)
-                        .badge(model.smartCounts[list] ?? 0)
-                        .tag(SidebarSelection.smart(list))
-                        .dropTarget(.smart(list))
+                    SidebarRow(
+                        title: list.title,
+                        symbolName: list.symbolName,
+                        count: model.smartCounts[list] ?? 0
+                    )
+                    .tag(SidebarSelection.smart(list))
+                    .dropTarget(.smart(list))
                 }
             }
 
-            Section("Projects") {
+            Section {
+                sidebarHeading("Projects")
+
                 ForEach(model.projects) { project in
-                    HStack(spacing: 6) {
-                        Dot(colorHex: project.colorHex)
-                        Text(project.name)
-                    }
-                    .badge(model.projectCounts[project.id] ?? 0)
+                    SidebarRow(
+                        title: project.name,
+                        colorHex: project.colorHex,
+                        count: model.projectCounts[project.id] ?? 0
+                    )
                     .tag(SidebarSelection.project(project.id))
                     .dropTarget(.project(project.id))
                     .contextMenu {
@@ -44,20 +49,29 @@ struct SidebarView: View {
                 Button {
                     isAddingProject = true
                 } label: {
-                    Label("New Project", systemImage: "plus")
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: Metrics.snug) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .medium))
+                            .frame(width: 16)
+                        Text("New Project")
+                        Spacer()
+                    }
+                    .foregroundStyle(.tertiaryText)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
 
             if !model.tags.isEmpty {
-                Section("Tags") {
+                Section {
+                    sidebarHeading("Tags")
+
                     ForEach(model.tags) { tag in
-                        HStack(spacing: 6) {
-                            Dot(colorHex: tag.colorHex, size: 6)
-                            Text("#\(tag.name)")
-                        }
-                        .badge(model.tagCounts[tag.id] ?? 0)
+                        SidebarRow(
+                            title: "#\(tag.name)",
+                            colorHex: tag.colorHex,
+                            count: model.tagCounts[tag.id] ?? 0
+                        )
                         .tag(SidebarSelection.tag(tag.id))
                         .dropTarget(.tag(tag.id))
                         .contextMenu {
@@ -68,6 +82,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
         .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
         .sheet(isPresented: $isAddingProject) {
             ProjectEditor(
@@ -204,5 +219,63 @@ private struct SidebarDropTarget: ViewModifier {
 extension View {
     func dropTarget(_ selection: SidebarSelection) -> some View {
         modifier(SidebarDropTarget(selection: selection))
+    }
+}
+
+// MARK: - Heading
+
+extension SidebarView {
+    /// A quiet heading inside the list rather than a `Section` title, whose
+    /// stock styling is heavier than the rows it introduces.
+    fileprivate func sidebarHeading(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(Typography.sectionHeader)
+            .tracking(0.6)
+            .foregroundStyle(.tertiaryText)
+            .padding(.top, Metrics.comfortable)
+            .padding(.bottom, 2)
+            .selectionDisabled()
+    }
+}
+
+// MARK: - Row
+
+/// One sidebar entry.
+///
+/// Hand-built rather than `Label(…).badge(…)`: the stock badge is a heavy
+/// pill that competes with the label it annotates, and a count is context, not
+/// a notification.
+private struct SidebarRow: View {
+    var title: String
+    var symbolName: String?
+    var colorHex: String?
+    var count: Int
+
+    var body: some View {
+        HStack(spacing: Metrics.regular) {
+            Group {
+                if let colorHex {
+                    Dot(colorHex: colorHex, size: 8)
+                } else if let symbolName {
+                    Image(systemName: symbolName)
+                        .font(.system(size: 12, weight: .medium))
+                }
+            }
+            .frame(width: 16)
+
+            Text(title)
+                .font(.system(size: 13))
+                .lineLimit(1)
+
+            Spacer(minLength: Metrics.snug)
+
+            if count > 0 {
+                Text("\(count)")
+                    .font(Typography.count)
+                    .foregroundStyle(.tertiaryText)
+            }
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
     }
 }

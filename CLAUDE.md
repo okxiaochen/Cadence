@@ -70,6 +70,26 @@ outside the bundle, so replacing the app never touches it.
   again. Add a new one. `testShippedMigrationIdentifiersAreStable` guards this.
 - The updater snapshots and verifies the database before every install.
 
+## Visual language
+
+`Features/Shared/DesignSystem.swift` holds the spacing scale (`Metrics`), type
+scale (`Typography`) and the shared row furniture. Use them rather than fresh
+numbers — scattered ad-hoc values are most of what made this read as generic.
+
+The recurring note from the user has been that it looked *functional but not
+considered*, and the cause each time was **too many surfaces**: separate fills
+per pane, a `Divider()` wherever two things met, and the same information said
+twice (a tinted "today" column *and* a working-hours band over it). Prefer
+whitespace to rules, one fill to three, and never state a thing two ways.
+
+`Metrics` is deliberately not called `Layout` — that name collides with
+SwiftUI's `Layout` protocol, which `FlowLayout` conforms to.
+
+Window translucency lives in `WindowChrome.swift`. A material alone does
+nothing: `.behindWindow` blending needs the `NSWindow` itself to be non-opaque,
+and any view painting its own background (`.bar`, a `List`'s scroll background,
+the toolbar) will punch an opaque hole straight through it.
+
 ## SwiftUI traps already hit here
 
 - **Never hand a `Scene` a freshly built `Binding` from a computed property.**
