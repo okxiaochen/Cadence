@@ -109,6 +109,15 @@ enum CLILocator {
             }
         }
 
+        // Only now pay for a login shell: the directories above cover the usual
+        // installs without one, and starting an interactive zsh is slow.
+        for directory in LoginEnvironment.searchPaths {
+            let candidate = URL(fileURLWithPath: directory).appendingPathComponent(trimmed)
+            if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                return candidate
+            }
+        }
+
         if let fromShell = try? askLoginShell(for: trimmed) { return fromShell }
         throw LocateError.notFound(trimmed)
     }

@@ -77,10 +77,20 @@ final class CLIRunner {
 
         if let workingDirectory { process.currentDirectoryURL = workingDirectory }
 
-        // A GUI app's environment is threadbare; give the CLI a usable PATH.
+        // A GUI app's environment is threadbare — no `.zshrc`, so no version
+        // manager and no custom PATH. Start from what a terminal would have
+        // given the command, because a terminal is where the user proved it
+        // works; a wrapper script that shells out to its own dependencies needs
+        // the whole environment, not just a binary we managed to find.
         var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = (CLILocator.searchPaths + [environment["PATH"] ?? ""])
-            .filter { !$0.isEmpty }
+            .merging(LoginEnvironment.variables) { _, fromShell in fromShell }
+        // The shell's own PATH first, then the places these tools install to,
+        // for the case where the capture came back empty.
+        var seen = Set<String>()
+        environment["PATH"] = (LoginEnvironment.searchPaths
+            + (environment["PATH"]?.split(separator: ":").map(String.init) ?? [])
+            + CLILocator.searchPaths)
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
             .joined(separator: ":")
         process.environment = environment
 

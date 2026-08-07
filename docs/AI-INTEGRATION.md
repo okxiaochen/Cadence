@@ -300,6 +300,26 @@ Timeout      [ 120 ] seconds
   A wrapper still has to accept the flags Cadence adds — `--mcp-config`,
   `--output-format`, `--append-system-prompt` — so one that drops unknown flags
   will fail no matter how it is resolved.
+
+- **Finding the command is only half of it.** A wrapper resolved to a real file
+  is run directly, with no shell in the way — and then it goes looking for its
+  *own* dependencies in an environment that has never read `.zshrc`. A wrapper
+  whose `claude` lives on an nvm/fnm/volta `PATH` reports “claude not installed”
+  from inside Cadence while working perfectly in Terminal.
+
+  So `LoginEnvironment` asks `zsh -ilc` once what it exports and every run
+  starts from that: the shell's `PATH` first, then Cadence's own guesses as a
+  fallback. Two things keep it honest:
+
+  - Only the **environment** is taken, never the shell's stdout. rc files print
+    banners and version notices; a marker is printed before `env -0` and
+    everything ahead of it is discarded, or that noise would land in the JSON we
+    parse.
+  - `PWD`, `OLDPWD`, `SHLVL` and `_` are dropped — they describe the probe
+    shell's session, not the run's, and the working directory is set explicitly.
+
+  The capture is cached for the life of the process; it costs one interactive
+  shell start (~0.7s here) the first time anything runs.
 - **Test connection** runs a trivial prompt with one read tool and reports
   round-trip time and whether MCP tools were reachable.
 - **Run history** lists past `ai_run` rows with prompt, argv, duration, applied

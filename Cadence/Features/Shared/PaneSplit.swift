@@ -6,19 +6,29 @@ import SwiftUI
 /// opaque window, but on a translucent one it is the loudest thing on screen.
 /// This is the same behaviour with a hairline, and a wider invisible grab area
 /// so the thin line is still easy to catch.
+/// Kept out of `PaneSplit` itself: a generic type cannot hold stored statics,
+/// and a window sizing itself around a split should not have to name the split's
+/// two view types to ask how narrow it may be.
+enum PaneSplitMetrics {
+    static let minimumLeading: CGFloat = 280
+    static let minimumTrailing: CGFloat = 420
+    static let grabWidth: CGFloat = 10
+
+    /// What an unconfigured split needs, in total.
+    static var minimumWidth: CGFloat { minimumLeading + grabWidth + minimumTrailing }
+}
+
 struct PaneSplit<Leading: View, Trailing: View>: View {
 
     var storageKey: String
-    var minimumLeading: CGFloat = 280
-    var minimumTrailing: CGFloat = 420
+    var minimumLeading: CGFloat = PaneSplitMetrics.minimumLeading
+    var minimumTrailing: CGFloat = PaneSplitMetrics.minimumTrailing
     @ViewBuilder var leading: Leading
     @ViewBuilder var trailing: Trailing
 
     @State private var width: CGFloat?
     @State private var dragStartWidth: CGFloat?
     @State private var isHovering = false
-
-    private static var grabWidth: CGFloat { 10 }
 
     var body: some View {
         GeometryReader { proxy in
@@ -36,7 +46,17 @@ struct PaneSplit<Leading: View, Trailing: View>: View {
                 }
             }
         }
+        // A `GeometryReader` accepts any width it is offered and reports no
+        // minimum of its own, so without this the split claims it can be a
+        // hairline wide. A parent `HStack` believes it, hands the space to
+        // whatever is beside it — the assistant — and the two panes end up with
+        // overlapping frames, drawing on top of each other.
+        .frame(minWidth: minimumWidth)
     }
+
+    /// What the two panes and the divider actually need. `resolvedWidth`
+    /// enforces this internally; this is the same number, said out loud.
+    var minimumWidth: CGFloat { minimumLeading + PaneSplitMetrics.grabWidth + minimumTrailing }
 
     private func resolvedWidth(in total: CGFloat) -> CGFloat {
         let proposed = width ?? total * 0.42
@@ -49,7 +69,7 @@ struct PaneSplit<Leading: View, Trailing: View>: View {
             .fill(.hairline)
             .frame(width: 1)
             // The line stays a hairline; the target around it does not.
-            .frame(width: Self.grabWidth)
+            .frame(width: PaneSplitMetrics.grabWidth)
             .contentShape(Rectangle())
             .onHover { inside in
                 isHovering = inside

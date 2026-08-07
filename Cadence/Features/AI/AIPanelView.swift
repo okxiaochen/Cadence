@@ -27,8 +27,14 @@ struct AIPanelView: View {
 
             composer
         }
-        .frame(minWidth: 280, idealWidth: 340)
+        // A capped maximum, or the panel is as flexible as the workspace beside
+        // it and an `HStack` splits the window down the middle — which crushes
+        // the calendar past its own minimum and the two overlap. This is a
+        // column beside the work, not half of it.
+        .frame(minWidth: Self.minimumWidth, idealWidth: 340, maxWidth: 460)
     }
+
+    static let minimumWidth: CGFloat = 300
 
     // MARK: - Header
 

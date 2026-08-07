@@ -53,7 +53,7 @@ struct RootView: View {
             .toolbar { toolbar }
             .safeAreaInset(edge: .top, spacing: 0) { UpdateBanner() }
         }
-        .frame(minWidth: 900, minHeight: 560)
+        .frame(minWidth: minimumWindowWidth, minHeight: 560)
         // Always hidden. The toolbar's own material is a different shade from
         // the window in every mode, and it is the one band that spans the full
         // width, so the mismatch is the first thing the eye finds.
@@ -89,6 +89,22 @@ struct RootView: View {
         } message: { message in
             Text(message)
         }
+    }
+
+    /// The window's minimum tracks what is actually on screen. A fixed 900 was
+    /// narrower than Split mode alone needs, so opening the assistant asked for
+    /// more width than existed and the panes overlapped instead of the window
+    /// growing. Opening the assistant now widens the window, the way an
+    /// inspector does everywhere else on the platform.
+    private var minimumWindowWidth: CGFloat {
+        // The sidebar's own minimum column width, from `SidebarView`.
+        let sidebar: CGFloat = 180
+        let content: CGFloat = switch mode {
+        case .list, .calendar: 420
+        case .split: PaneSplitMetrics.minimumWidth
+        }
+        let assistant: CGFloat = showsAssistant ? AIPanelView.minimumWidth + 1 : 0
+        return sidebar + content + assistant
     }
 
     @ViewBuilder
