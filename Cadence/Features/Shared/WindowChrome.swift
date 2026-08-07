@@ -50,6 +50,52 @@ private struct TranslucentWindow: NSViewRepresentable {
     }
 }
 
+/// Makes the split view's sidebar column use the same material as the rest of
+/// the window.
+///
+/// AppKit gives that column its own `NSVisualEffectView` with the `.sidebar`
+/// material, which sits *below* the SwiftUI `List` — so hiding the list's own
+/// background does not reach it, and the sidebar stays a different shade from
+/// everything beside it. The only way to it is up the view hierarchy.
+private struct MatchSidebarMaterial: NSViewRepresentable {
+    var appearance: BackgroundAppearance
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        apply(from: view)
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        apply(from: view)
+    }
+
+    private func apply(from view: NSView) {
+        // The hierarchy does not exist during the first layout pass.
+        DispatchQueue.main.async {
+            var ancestor = view.superview
+            while let current = ancestor {
+                if let effect = current as? NSVisualEffectView {
+                    effect.material = appearance.isTranslucent
+                        ? appearance.material
+                        : .windowBackground
+                    // `.followsWindowActiveState` dims the sidebar when the
+                    // window loses focus, which reintroduces the mismatch.
+                    effect.state = .active
+                    return
+                }
+                ancestor = current.superview
+            }
+        }
+    }
+}
+
+extension View {
+    func matchesWindowMaterial(_ appearance: BackgroundAppearance) -> some View {
+        background(MatchSidebarMaterial(appearance: appearance))
+    }
+}
+
 // MARK: - The modifier views use
 
 extension View {
