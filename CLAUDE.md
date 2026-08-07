@@ -107,8 +107,13 @@ finds it far faster than reading the code.
   that **cannot be made read-only** (no such API), so the database wins and
   every reconcile overwrites.
 
-One task has **one date and at most one time block**; the invariant lives in
-`TodoRepository` so every path maintains it without call-site logic.
+Two invariants live in `TodoRepository`, so every path — drag, AI, quick
+capture, undo — maintains them without call-site logic:
+
+- one task has **one date and at most one time block**, and the date *is* the
+  block's start;
+- a scheduled task's **estimate is its block's length**. Resizing changes the
+  estimate; editing the estimate resizes the block.
 
 ## What cannot be verified from here
 

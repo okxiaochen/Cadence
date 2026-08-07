@@ -171,17 +171,6 @@ extension AppModel {
         )
     }
 
-    /// Copies the block's length onto the task's estimate — the usual follow-up
-    /// after discovering by dragging how long something really needs.
-    func adoptBlockDurationAsEstimate(_ blockID: String) {
-        guard let existing = block(withID: blockID) else { return }
-        mutate("Set Estimate", affecting: [existing.taskID]) { db in
-            guard var todo = try TodoRepository.fetch(db, id: existing.taskID) else { return }
-            todo.estimateMinutes = existing.durationMinutes
-            try TodoRepository.update(db, todo)
-        }
-    }
-
     func deleteBlock(_ blockID: String) {
         guard let taskID = taskID(forBlock: blockID) else { return }
         mutate("Unschedule Task", affecting: [taskID]) { db in

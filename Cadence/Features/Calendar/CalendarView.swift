@@ -203,7 +203,7 @@ struct CalendarView: View {
         .overlay(alignment: .top) {
             // A short block has no room for a top handle without swallowing the
             // whole thing; resize it from the bottom instead.
-            if rect.height >= 22 {
+            if rect.height >= 28 {
                 resizeHandle(positioned, geometry: geometry, edge: .start, blockHeight: rect.height)
             }
         }
@@ -219,9 +219,6 @@ struct CalendarView: View {
                         model.setBlockDuration(positioned.id, minutes: minutes)
                     }
                 }
-            }
-            Button("Use Duration as Estimate") {
-                model.adoptBlockDurationAsEstimate(positioned.id)
             }
             Divider()
             Button("Unschedule") { model.deleteBlock(positioned.id) }
@@ -300,13 +297,10 @@ struct CalendarView: View {
         edge: Edge,
         blockHeight: CGFloat
     ) -> some View {
-        Color.clear
-            .frame(height: min(6, max(3, blockHeight / 4)))
-            .contentShape(Rectangle())
-            .onHover { inside in
-                if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
-            }
-            .gesture(
+        ResizeHandle(height: min(10, max(5, blockHeight / 3)))
+            // High priority, or the block's own move gesture wins the
+            // arbitration and the edge drags the whole block instead.
+            .highPriorityGesture(
                 DragGesture(minimumDistance: 2, coordinateSpace: .named(Self.gridSpace))
                     .onChanged { value in
                         let original = positioned.block.interval
@@ -629,5 +623,46 @@ private struct CurrentTimeIndicator: View {
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// The drag target at a block's top and bottom edge.
+///
+/// `NSCursor.push()/pop()` in an `onHover` is a trap: hover enter and exit do
+/// not always pair, and an unbalanced pop corrupts the cursor stack for the
+/// whole app. This tracks its own push instead.
+private struct ResizeHandle: View {
+    var height: CGFloat
+
+    @State private var isHovering = false
+    @State private var hasPushedCursor = false
+
+    var body: some View {
+        Color.clear
+            .frame(height: height)
+            .contentShape(Rectangle())
+            .overlay {
+                if isHovering {
+                    Capsule()
+                        .fill(.primary.opacity(0.55))
+                        .frame(width: 18, height: 3)
+                }
+            }
+            .onHover { inside in
+                isHovering = inside
+                if inside, !hasPushedCursor {
+                    NSCursor.resizeUpDown.push()
+                    hasPushedCursor = true
+                } else if !inside, hasPushedCursor {
+                    NSCursor.pop()
+                    hasPushedCursor = false
+                }
+            }
+            .onDisappear {
+                if hasPushedCursor {
+                    NSCursor.pop()
+                    hasPushedCursor = false
+                }
+            }
     }
 }

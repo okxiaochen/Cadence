@@ -192,9 +192,11 @@ final class AppModel {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        // A new task inherits the context you are looking at.
+        // A new task inherits the context you are looking at: its project, its
+        // tag, and — if the list is a day — its date.
         let contextProject = projectID ?? currentProjectID
         let contextTags = tagNames.isEmpty ? currentTagNames : tagNames
+        let dueAt = dueAt ?? (scheduledAt == nil ? currentDefaultDate : nil)
         let todo = Todo(
             title: trimmed,
             notes: notes,
@@ -401,6 +403,44 @@ final class AppModel {
         }
     }
 
+    /// Estimate and block length are one value: setting one resizes the other.
+    func setEstimate(_ minutes: Int?, for ids: [String]) {
+        mutate("Change Estimate", affecting: ids) { db in
+            for id in ids {
+                try TodoRepository.setEstimate(db, taskID: id, minutes: minutes)
+            }
+        }
+        scheduleCalendarPublish()
+    }
+
+    /// Pushes a task's block later, keeping its length. Used by the Snooze
+    /// action on a notification.
+    func snooze(taskID: String, byMinutes minutes: Int) {
+        mutate("Snooze", affecting: [taskID]) { db in
+            guard var block = try TimeBlock.fetchAll(
+                db,
+                sql: "SELECT * FROM time_block WHERE taskID = ? ORDER BY startAt",
+                arguments: [taskID]
+            ).first else { return }
+
+            let shift = TimeInterval(minutes * 60)
+            let duration = block.endAt.timeIntervalSince(block.startAt)
+            let start = block.startAt.addingTimeInterval(shift)
+            // Measured from the block's *current* day: using the new start
+            // means a block already pushed past midnight measures against the
+            // following day and the guard never fires.
+            let endOfDay = Calendar.current
+                .startOfDay(for: block.startAt)
+                .addingTimeInterval(86_400)
+            guard start.addingTimeInterval(duration) <= endOfDay else { return }
+
+            block.startAt = start
+            block.endAt = start.addingTimeInterval(duration)
+            try TodoRepository.updateBlock(db, block)
+        }
+        scheduleCalendarPublish()
+    }
+
     func setPriority(_ priority: Priority, for ids: [String]) {
         mutate("Change Priority", affecting: ids) { db in
             for id in ids {
@@ -476,6 +516,20 @@ final class AppModel {
     var currentProjectID: String? {
         if case .project(let id) = query.selection { return id }
         return nil
+    }
+
+    /// The date a task created in the current list should get. Nil where the
+    /// list says nothing about when — a project or tag is not a day.
+    var currentDefaultDate: Date? {
+        let calendar = Calendar.current
+        switch query.selection {
+        case .smart(.today):
+            return calendar.startOfDay(for: Date())
+        case .smart(.upcoming):
+            return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))
+        case .smart(.anytime), .smart(.logbook), .project, .tag:
+            return nil
+        }
     }
 
     var currentTagNames: [String] {

@@ -26,6 +26,7 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(AgentSession.self) private var session
     @Environment(Preferences.self) private var preferences
+    @Environment(NotificationService.self) private var notifications
     @Environment(\.undoManager) private var undoManager
 
     @State private var detailPanel: TaskDetailPanelController?
@@ -54,6 +55,11 @@ struct RootView: View {
         .onAppear {
             model.undoManager = undoManager
             model.publishToCalendar()
+        }
+        // Reminders are rebuilt from the agenda whenever it changes, so a
+        // rescheduled block can never leave a stale alert behind.
+        .task(id: model.agendaItems) {
+            await notifications.reschedule(from: model.agendaItems)
         }
         .task(id: model.inspectedID) {
             if detailPanel == nil {

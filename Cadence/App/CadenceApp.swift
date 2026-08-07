@@ -7,6 +7,7 @@ struct CadenceApp: App {
     @State private var preferences = Preferences.shared
     @State private var session: AgentSession
     @State private var updater: Updater
+    @State private var notifications: NotificationService
     @State private var startupError: String?
 
     @AppStorage("workspaceMode") private var mode: WorkspaceMode = .list
@@ -34,6 +35,7 @@ struct CadenceApp: App {
         _quickCapture = State(initialValue: QuickCaptureController(model: model))
         _session = State(initialValue: AgentSession(model: model))
         _updater = State(initialValue: Updater(database: database))
+        _notifications = State(initialValue: NotificationService(model: model))
         _startupError = State(initialValue: failure)
     }
 
@@ -44,8 +46,10 @@ struct CadenceApp: App {
                 .environment(preferences)
                 .environment(session)
                 .environment(updater)
+                .environment(notifications)
                 .task {
                     if let startupError { model.errorMessage = startupError }
+                    await notifications.refreshAuthorization()
                     await updater.checkInBackground()
                     GlobalHotkey.shared.onFire = { [quickCapture] in
                         Task { @MainActor in quickCapture.toggle() }
@@ -61,9 +65,11 @@ struct CadenceApp: App {
                 .environment(model)
                 .environment(preferences)
         } label: {
-            // A glyph rather than the next task's title: a label that changes
-            // width every few minutes shoves every other status item sideways.
+            // Icon plus a count, not the next task's title: a label whose width
+            // changes every few minutes shoves every other status item sideways.
+            // Two digits is a bounded, and therefore tolerable, amount of drift.
             Image(systemName: "calendar.day.timeline.left")
+            Text(model.todayCountLabel)
         }
         .menuBarExtraStyle(.window)
 
@@ -73,6 +79,7 @@ struct CadenceApp: App {
                 .environment(preferences)
                 .environment(session)
                 .environment(updater)
+                .environment(notifications)
         }
     }
 

@@ -117,15 +117,20 @@ struct TaskDetailView: View {
                 }
             }
 
-            LabeledContent("Estimate") {
-                EstimateField(minutes: $draft.estimateMinutes, onCommit: commit)
-            }
-
             WhenRow(
                 date: detail.todo.dueAt,
                 hasTime: !detail.blocks.isEmpty
             ) { date, includesTime in
                 model.setWhen(date, includesTime: includesTime, for: [draft.id])
+            }
+
+            LabeledContent(detail.blocks.isEmpty ? "Estimate" : "Duration") {
+                DurationField(
+                    minutes: detail.todo.estimateMinutes,
+                    isScheduled: !detail.blocks.isEmpty
+                ) { minutes in
+                    model.setEstimate(minutes, for: [draft.id])
+                }
             }
 
             OptionalDateRow(title: "Defer Until", date: $draft.deferAt, onCommit: commit)
@@ -162,13 +167,13 @@ struct TaskDetailView: View {
 
     @ViewBuilder
     private var budgetLine: some View {
-        if let estimate = draft.estimateMinutes {
-            let scheduled = detail.scheduledMinutes
-            let short = max(0, estimate - scheduled)
-            Text("\(Format.duration(estimate)) estimated · \(Format.duration(scheduled)) blocked"
-                 + (short > 0 ? " · \(Format.duration(short)) short" : ""))
+        // Estimate and block length are the same value now, so there is no
+        // shortfall to report — just say when the work sits.
+        if let block = detail.blocks.first {
+            Text("\(Format.date(block.startAt)) · "
+                 + "\(Format.time(block.startAt))–\(Format.time(block.endAt))")
                 .font(.caption)
-                .foregroundStyle(short > 0 ? Color.orange : .secondary)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -287,26 +292,49 @@ struct TaskDetailView: View {
 
 // MARK: - Field helpers
 
-private struct EstimateField: View {
-    @Binding var minutes: Int?
-    var onCommit: () -> Void
+/// How long the work takes. When the task is scheduled this *is* the block's
+/// length, so editing it moves the block's end and vice versa.
+private struct DurationField: View {
+    var minutes: Int?
+    var isScheduled: Bool
+    var onChange: (Int?) -> Void
 
     @State private var text = ""
 
+    private static let presets = [15, 30, 45, 60, 90, 120]
+
     var body: some View {
-        TextField("e.g. 45m, 2h", text: $text)
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 110)
-            .onAppear { text = minutes.map(Format.duration) ?? "" }
-            .onChange(of: minutes) { _, newValue in
-                text = newValue.map(Format.duration) ?? ""
+        HStack(spacing: 4) {
+            TextField("e.g. 45m, 2h", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 84)
+                .onAppear { text = minutes.map(Format.duration) ?? "" }
+                .onChange(of: minutes) { _, newValue in
+                    text = newValue.map(Format.duration) ?? ""
+                }
+                .onSubmit(commit)
+
+            Menu {
+                ForEach(Self.presets, id: \.self) { preset in
+                    Button(Format.duration(preset)) { onChange(preset) }
+                }
+                if !isScheduled {
+                    Divider()
+                    Button("None") { onChange(nil) }
+                }
+            } label: {
+                Image(systemName: "chevron.down")
             }
-            .onSubmit {
-                let trimmed = text.trimmingCharacters(in: .whitespaces)
-                minutes = trimmed.isEmpty ? nil : CaptureParser.minutes(from: trimmed)
-                text = minutes.map(Format.duration) ?? ""
-                onCommit()
-            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        }
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        let parsed = trimmed.isEmpty ? nil : CaptureParser.minutes(from: trimmed)
+        onChange(parsed)
+        text = parsed.map(Format.duration) ?? ""
     }
 }
 

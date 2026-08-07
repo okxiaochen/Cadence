@@ -51,6 +51,20 @@ extension AppModel {
         AgendaBuilder.sections(from: agendaItems, now: now)
     }
 
+    /// Open work left for today, for the status item.
+    var todayRemainingCount: Int {
+        let calendar = Calendar.current
+        let startOfTomorrow = calendar.date(
+            byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())
+        ) ?? Date()
+        return agendaItems.filter { $0.day < startOfTomorrow && !$0.todo.isCompleted }.count
+    }
+
+    var todayCountLabel: String {
+        let count = todayRemainingCount
+        return count == 0 ? "" : "\(count)"
+    }
+
     /// What the status item shows: whatever is running, else the next thing today.
     func agendaFocus(now: Date = Date()) -> AgendaItem? {
         AgendaBuilder.focus(in: agendaItems, now: now)

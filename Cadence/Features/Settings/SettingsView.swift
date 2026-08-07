@@ -11,6 +11,8 @@ struct SettingsView: View {
                 .tabItem { Label("AI", systemImage: "sparkles") }
             MemorySettings()
                 .tabItem { Label("Memory", systemImage: "brain") }
+            NotificationSettings()
+                .tabItem { Label("Alerts", systemImage: "bell") }
             UpdateSettings()
                 .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
         }
@@ -433,5 +435,60 @@ private struct UpdateSettings: View {
     private func size(of url: URL) -> String {
         let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+}
+
+// MARK: - Notifications
+
+private struct NotificationSettings: View {
+    @Environment(AppModel.self) private var model
+    @Environment(NotificationService.self) private var notifications
+
+    var body: some View {
+        @Bindable var notifications = notifications
+
+        Form {
+            Section("Reminders") {
+                switch notifications.authorization {
+                case .authorized:
+                    Toggle("Remind me when work starts", isOn: $notifications.isEnabled)
+
+                    Picker("Warn me before", selection: $notifications.leadTimeMinutes) {
+                        Text("Not at all").tag(0)
+                        ForEach([2, 5, 10, 15, 30], id: \.self) { Text("\($0) min").tag($0) }
+                    }
+                    .disabled(!notifications.isEnabled)
+
+                case .denied:
+                    Text("Notifications are turned off for Cadence. Enable them in "
+                         + "System Settings › Notifications.")
+                        .foregroundStyle(.secondary)
+
+                case .unknown:
+                    Button("Turn On Notifications") {
+                        Task {
+                            await notifications.requestAuthorization()
+                            await notifications.reschedule(from: model.agendaItems)
+                        }
+                    }
+                }
+            }
+
+            Section {
+                Text("A reminder carries Complete and Snooze actions, so a block "
+                     + "can be dealt with without opening the app. Only scheduled "
+                     + "work is announced — an all-day task has no moment to fire at.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .task { await notifications.refreshAuthorization() }
+        .onChange(of: notifications.isEnabled) { _, _ in
+            Task { await notifications.reschedule(from: model.agendaItems) }
+        }
+        .onChange(of: notifications.leadTimeMinutes) { _, _ in
+            Task { await notifications.reschedule(from: model.agendaItems) }
+        }
     }
 }

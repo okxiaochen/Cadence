@@ -361,24 +361,6 @@ final class AppModelCalendarTests: XCTestCase {
         XCTAssertEqual(stored.endAt, Calendar.current.startOfDay(for: lateStart).addingTimeInterval(86_400))
     }
 
-    func testAdoptingBlockDurationWritesTheEstimate() throws {
-        let id = try makeTodo("Guessed low", estimate: 30)
-        let blockID = schedule(todoID: id, at: start, duration: 30)!
-
-        undo.beginUndoGrouping()
-        model.setBlockDuration(blockID, minutes: 120)
-        undo.endUndoGrouping()
-
-        undo.beginUndoGrouping()
-        model.adoptBlockDurationAsEstimate(blockID)
-        undo.endUndoGrouping()
-
-        XCTAssertEqual(try todo(id)?.estimateMinutes, 120)
-
-        undo.undo()
-        XCTAssertEqual(try todo(id)?.estimateMinutes, 30)
-    }
-
     // MARK: - Moving between days
 
     func testDroppingOnADayKeepsTheTimeOfDay() throws {
@@ -411,5 +393,131 @@ final class AppModelCalendarTests: XCTestCase {
 
         XCTAssertTrue(try blocks(forTask: id).isEmpty, "no time before, no time after")
         XCTAssertEqual(try todo(id)?.dueAt, Calendar.current.startOfDay(for: tomorrow))
+    }
+
+    // MARK: - Estimate and duration are one value
+
+    func testSchedulingSetsTheEstimateFromTheBlock() throws {
+        let id = try makeTodo("No estimate yet")
+        schedule(todoID: id, at: start, duration: 45)
+        XCTAssertEqual(try todo(id)?.estimateMinutes, 45)
+    }
+
+    func testResizingABlockChangesTheEstimate() throws {
+        let id = try makeTodo("Grow me", estimate: 30)
+        let blockID = schedule(todoID: id, at: start)!
+
+        setBlockInterval(
+            blockID,
+            to: DateInterval(start: start, duration: 5400),
+            actionName: "Resize Block"
+        )
+        XCTAssertEqual(try todo(id)?.estimateMinutes, 90, "dragging longer means it takes longer")
+    }
+
+    func testChangingTheEstimateResizesTheBlock() throws {
+        let id = try makeTodo("Stretch me", estimate: 30)
+        schedule(todoID: id, at: start)
+
+        undo.beginUndoGrouping()
+        model.setEstimate(120, for: [id])
+        undo.endUndoGrouping()
+
+        let block = try XCTUnwrap(try blocks(forTask: id).first)
+        XCTAssertEqual(block.durationMinutes, 120)
+        XCTAssertEqual(block.startAt, start, "the start is held; the end moves")
+    }
+
+    func testTheEstimateOfAnUnscheduledTaskIsJustANumber() throws {
+        let id = try makeTodo("Not scheduled")
+
+        undo.beginUndoGrouping()
+        model.setEstimate(90, for: [id])
+        undo.endUndoGrouping()
+
+        XCTAssertEqual(try todo(id)?.estimateMinutes, 90)
+        XCTAssertTrue(try blocks(forTask: id).isEmpty)
+    }
+
+    func testAnEstimateCannotPushABlockPastMidnight() throws {
+        let id = try makeTodo("Late")
+        let late = Calendar.current.date(bySettingHour: 23, minute: 0, second: 0, of: start)!
+        schedule(todoID: id, at: late, duration: 30)
+
+        undo.beginUndoGrouping()
+        model.setEstimate(240, for: [id])
+        undo.endUndoGrouping()
+
+        let block = try XCTUnwrap(try blocks(forTask: id).first)
+        XCTAssertEqual(block.durationMinutes, 60)
+    }
+
+    // MARK: - Snooze
+
+    func testSnoozeMovesTheBlockKeepingItsLength() throws {
+        let id = try makeTodo("Later", estimate: 30)
+        schedule(todoID: id, at: start)
+
+        undo.beginUndoGrouping()
+        model.snooze(taskID: id, byMinutes: 10)
+        undo.endUndoGrouping()
+
+        let block = try XCTUnwrap(try blocks(forTask: id).first)
+        XCTAssertEqual(block.startAt, start.addingTimeInterval(600))
+        XCTAssertEqual(block.durationMinutes, 30)
+    }
+
+    func testSnoozeRefusesToPushABlockPastMidnight() throws {
+        let id = try makeTodo("Nearly midnight")
+        let late = Calendar.current.date(bySettingHour: 23, minute: 45, second: 0, of: start)!
+        schedule(todoID: id, at: late, duration: 15)
+
+        undo.beginUndoGrouping()
+        model.snooze(taskID: id, byMinutes: 30)
+        undo.endUndoGrouping()
+
+        // Better to leave it where it is than to have it vanish from its day.
+        XCTAssertEqual(try blocks(forTask: id).first?.startAt, late)
+    }
+
+    // MARK: - Context inheritance
+
+    /// `createTodo` registers undo like any other mutation, so tests must open
+    /// a group the way the run loop does for a real action.
+    private func create(_ title: String, dueAt: Date? = nil) -> String? {
+        undo.beginUndoGrouping()
+        defer { undo.endUndoGrouping() }
+        return model.createTodo(title: title, dueAt: dueAt)
+    }
+
+    func testANewTaskInheritsTheDayFromTheListYouAreLookingAt() throws {
+        model.query.selection = .smart(.today)
+        let id = try XCTUnwrap(create("From Today"))
+        XCTAssertEqual(
+            try todo(id)?.dueAt,
+            Calendar.current.startOfDay(for: Date())
+        )
+    }
+
+    func testUpcomingFilesNewWorkForTomorrow() throws {
+        model.query.selection = .smart(.upcoming)
+        let id = try XCTUnwrap(create("From Upcoming"))
+        let tomorrow = Calendar.current.date(
+            byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date())
+        )
+        XCTAssertEqual(try todo(id)?.dueAt, tomorrow)
+    }
+
+    func testAListThatIsNotADayLeavesTheDateAlone() throws {
+        model.query.selection = .smart(.anytime)
+        let id = try XCTUnwrap(create("Undated"))
+        XCTAssertNil(try todo(id)?.dueAt, "a project or Anytime says nothing about when")
+    }
+
+    func testATypedDateBeatsTheList() throws {
+        model.query.selection = .smart(.today)
+        let explicit = Calendar.current.date(byAdding: .day, value: 5, to: start)!
+        let id = try XCTUnwrap(create("Explicit", dueAt: explicit))
+        XCTAssertEqual(try todo(id)?.dueAt, explicit)
     }
 }

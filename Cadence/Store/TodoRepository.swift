@@ -186,11 +186,13 @@ enum TodoRepository {
         )
         try block.insert(db)
         try alignDate(db, taskID: block.taskID, to: block.startAt)
+        try alignEstimate(db, taskID: block.taskID, to: block.durationMinutes)
     }
 
     static func updateBlock(_ db: Database, _ block: TimeBlock) throws {
         try block.update(db)
         try alignDate(db, taskID: block.taskID, to: block.startAt)
+        try alignEstimate(db, taskID: block.taskID, to: block.durationMinutes)
     }
 
     /// Unscheduling keeps the day but drops the time, so the task becomes an
@@ -211,6 +213,38 @@ enum TodoRepository {
         guard var todo = try fetch(db, id: taskID), todo.dueAt != date else { return }
         todo.dueAt = date
         try update(db, todo)
+    }
+
+    /// A scheduled task's estimate *is* the length of its block. Keeping them
+    /// as two numbers that disagree helps nobody: dragging a block longer means
+    /// the work takes longer.
+    private static func alignEstimate(_ db: Database, taskID: String, to minutes: Int) throws {
+        guard var todo = try fetch(db, id: taskID), todo.estimateMinutes != minutes else { return }
+        todo.estimateMinutes = minutes
+        try update(db, todo)
+    }
+
+    /// The other direction: setting an estimate resizes the block, keeping its
+    /// start. Returns whether a block was resized.
+    @discardableResult
+    static func setEstimate(_ db: Database, taskID: String, minutes: Int?) throws -> Bool {
+        guard var todo = try fetch(db, id: taskID) else { return false }
+        todo.estimateMinutes = minutes
+        try update(db, todo)
+
+        guard let minutes, var block = try TimeBlock.fetchAll(
+            db,
+            sql: "SELECT * FROM time_block WHERE taskID = ? ORDER BY startAt",
+            arguments: [taskID]
+        ).first else { return false }
+
+        let endOfDay = Calendar.current.startOfDay(for: block.startAt).addingTimeInterval(86_400)
+        block.endAt = min(
+            block.startAt.addingTimeInterval(TimeInterval(max(5, minutes) * 60)),
+            endOfDay
+        )
+        try block.update(db)
+        return true
     }
 
     static func fetchBlock(_ db: Database, id: String) throws -> TimeBlock? {

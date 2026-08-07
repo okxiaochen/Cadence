@@ -3,7 +3,6 @@ import SwiftUI
 struct TodoListView: View {
     @Environment(AppModel.self) private var model
 
-    @State private var newTaskText = ""
     @State private var editingID: String?
     @FocusState private var isComposerFocused: Bool
 
@@ -118,34 +117,27 @@ struct TodoListView: View {
     // MARK: - Composer
 
     private var composer: some View {
-        let parsed = CaptureParser.parse(newTaskText)
-
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "plus.circle")
-                    .foregroundStyle(.secondary)
-                TextField("New task — try  #tag @project !2 ~45m tomorrow", text: $newTaskText)
-                    .textFieldStyle(.plain)
-                    .focused($isComposerFocused)
-                    .onSubmit(addTask)
-            }
-
-            if !parsed.summaryChips.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(parsed.summaryChips, id: \.self) { chip in
-                        Text(chip)
-                            .font(.caption2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(.quaternary, in: Capsule())
-                    }
-                }
-                .foregroundStyle(.secondary)
-            }
+        CaptureField(contextChips: contextChips) { parsed in
+            addTask(parsed)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(.bar)
+    }
+
+    /// What the current list will add for you, so it is visible before you
+    /// press return rather than a surprise afterwards.
+    private var contextChips: [String] {
+        var chips: [String] = []
+        if let id = model.currentProjectID,
+           let project = model.projects.first(where: { $0.id == id }) {
+            chips.append("@\(project.name)")
+        }
+        chips.append(contentsOf: model.currentTagNames.map { "#\($0)" })
+        if let date = model.currentDefaultDate {
+            chips.append(Format.relativeDue(date))
+        }
+        return chips
     }
 
     private var emptyState: some View {
@@ -203,9 +195,7 @@ struct TodoListView: View {
 
     // MARK: - Actions
 
-    private func addTask() {
-        let parsed = CaptureParser.parse(newTaskText)
-        guard !parsed.isEmpty else { return }
+    private func addTask(_ parsed: ParsedCapture) {
         model.createTodo(
             title: parsed.title,
             projectID: projectID(named: parsed.projectName),
@@ -215,7 +205,6 @@ struct TodoListView: View {
             dueAt: parsed.dueAt,
             scheduledAt: parsed.scheduledAt
         )
-        newTaskText = ""
     }
 
     private func projectID(named name: String?) -> String? {
