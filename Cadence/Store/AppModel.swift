@@ -19,7 +19,39 @@ final class AppModel {
     private(set) var tagCounts: [String: Int] = [:]
 
     var query = TodoQuery() {
-        didSet { if oldValue != query { restartListObservation() } }
+        didSet {
+            guard oldValue != query else { return }
+            syncViewOptions(from: oldValue)
+            restartListObservation()
+        }
+    }
+
+    /// Guards the re-entry in `syncViewOptions`: loading a list's stored
+    /// grouping writes to `query`, which lands back in this same `didSet`.
+    private var isApplyingViewOptions = false
+
+    /// Grouping and sorting belong to the list you are looking at. Switching
+    /// lists loads that list's choices; changing them saves against it.
+    private func syncViewOptions(from oldValue: TodoQuery) {
+        guard !isApplyingViewOptions else { return }
+
+        if oldValue.selection != query.selection {
+            isApplyingViewOptions = true
+            defer { isApplyingViewOptions = false }
+            if let stored = Preferences.shared.viewOptions(for: query.selection) {
+                query.grouping = stored.grouping
+                query.sort = stored.sort
+            } else {
+                query.grouping = .none
+                query.sort = .manual
+            }
+        } else if oldValue.grouping != query.grouping || oldValue.sort != query.sort {
+            Preferences.shared.setViewOptions(
+                grouping: query.grouping,
+                sort: query.sort,
+                for: query.selection
+            )
+        }
     }
 
     /// Selected task ids. Multi-select drives the bulk actions in the
@@ -27,7 +59,13 @@ final class AppModel {
     var selection: Set<String> = []
 
     /// The task whose floating detail popover is open, if any.
-    var inspectedID: String?
+    var inspectedID: String? {
+        didSet { if oldValue != inspectedID { restartInspectedProgressObservation() } }
+    }
+
+    /// The inspected task's timeline. Observed rather than read once, so the
+    /// panel updates while a timer runs beneath it.
+    var inspectedEntries: [ProgressEntry] = []
 
     var errorMessage: String?
 
@@ -51,6 +89,8 @@ final class AppModel {
     // Written only by the calendar observation in AppModel+Calendar.swift,
     // which is a different file — hence no `private(set)`.
     var scheduledBlocks: [ScheduledBlock] = []
+    /// Time actually recorded inside the visible range, drawn beside the plan.
+    var trackedSessions: [TrackedSession] = []
     var unscheduled: [TodoDetail] = []
     /// Tasks due within the visible range, shown in the all-day lane.
     var dueInRange: [TodoDetail] = []
@@ -64,6 +104,11 @@ final class AppModel {
     /// showing — the menu bar must not change when you navigate to March.
     var agendaItems: [AgendaItem] = []
     var selectedBlockID: String?
+
+    /// Sessions running right now, newest first — several are allowed, since
+    /// real work interleaves. Held here rather than in the list rows so the
+    /// menu bar and the calendar see them whatever list is on screen.
+    var runningEntries: [ProgressEntry] = []
 
     let eventKit = EventKitService()
     private(set) var calendarSync: CalendarSyncService!
@@ -90,6 +135,8 @@ final class AppModel {
     private var catalogCancellable: AnyDatabaseCancellable?
     var calendarCancellable: AnyDatabaseCancellable?
     var agendaCancellable: AnyDatabaseCancellable?
+    var runningCancellable: AnyDatabaseCancellable?
+    var inspectedProgressCancellable: AnyDatabaseCancellable?
     private var publishTask: Task<Void, Never>?
     private var clockTask: Task<Void, Never>?
     /// The day the agenda window was built for, so it can be rebuilt at midnight.
@@ -99,10 +146,18 @@ final class AppModel {
         self.database = database
         self.calendarSync = CalendarSyncService(store: eventKit.store, database: database)
         eventKit.managedCalendarID = calendarSync.managedCalendarID
+        // The list you left the app on keeps how you had it arranged.
+        if let stored = Preferences.shared.viewOptions(for: query.selection) {
+            isApplyingViewOptions = true
+            query.grouping = stored.grouping
+            query.sort = stored.sort
+            isApplyingViewOptions = false
+        }
         restartListObservation()
         startCatalogObservation()
         restartCalendarObservation()
         restartAgendaObservation()
+        restartRunningObservation()
         startClock()
     }
 
@@ -351,34 +406,25 @@ final class AppModel {
     /// Moves a task to another day, keeping its time of day if it had one.
     /// Dragging a 10am task from Wednesday to Friday should still be 10am.
     func moveToDay(_ day: Date, for ids: [String]) {
-        let calendar = Calendar.current
         mutate("Change Date", affecting: ids) { db in
             for id in ids {
-                guard let todo = try TodoRepository.fetch(db, id: id) else { continue }
-                let block = try TimeBlock.fetchAll(
-                    db,
-                    sql: "SELECT * FROM time_block WHERE taskID = ? ORDER BY startAt",
-                    arguments: [id]
-                ).first
-
-                if var block {
-                    let time = calendar.dateComponents([.hour, .minute], from: block.startAt)
-                    guard let start = calendar.date(
-                        bySettingHour: time.hour ?? 9,
-                        minute: time.minute ?? 0,
-                        second: 0,
-                        of: day
-                    ) else { continue }
-                    let duration = block.endAt.timeIntervalSince(block.startAt)
-                    block.startAt = start
-                    block.endAt = start.addingTimeInterval(duration)
-                    try TodoRepository.updateBlock(db, block)
-                } else {
-                    var updated = todo
-                    updated.dueAt = calendar.startOfDay(for: day)
-                    try TodoRepository.update(db, updated)
-                }
+                try TodoRepository.moveToDay(db, id: id, day: day)
             }
+        }
+        scheduleCalendarPublish()
+    }
+
+    /// Drops tasks between two rows in manual order, and — when the rows belong
+    /// to a day — onto that day, in one step. Two undo steps for one drag would
+    /// leave a half-applied move behind the first ⌘Z.
+    func reorder(_ ids: [String], relativeTo targetID: String, placeAfter: Bool, day: Date? = nil) {
+        let ids = ids.filter { $0 != targetID }
+        guard !ids.isEmpty else { return }
+        mutate("Reorder", affecting: ids) { db in
+            if let day {
+                for id in ids { try TodoRepository.moveToDay(db, id: id, day: day) }
+            }
+            try TodoRepository.reorder(db, ids: ids, relativeTo: targetID, placeAfter: placeAfter)
         }
         scheduleCalendarPublish()
     }
@@ -632,6 +678,9 @@ struct TodoSnapshot {
     var todo: Todo?
     var tagIDs: [String]
     var blocks: [TimeBlock]
+    /// Captured too, so undoing a delete brings back what the task recorded —
+    /// the timeline cascades away with its task and cannot be rebuilt.
+    var progress: [ProgressEntry] = []
 
     /// Expands `ids` with every descendant, so a cascade delete or a
     /// complete-the-children edit can be undone whole.
@@ -662,7 +711,13 @@ struct TodoSnapshot {
                 sql: "SELECT * FROM time_block WHERE taskID = ?",
                 arguments: [id]
             )
-            return TodoSnapshot(id: id, todo: todo, tagIDs: tagIDs, blocks: blocks)
+            return TodoSnapshot(
+                id: id,
+                todo: todo,
+                tagIDs: tagIDs,
+                blocks: blocks,
+                progress: try ProgressRepository.entries(db, taskID: id)
+            )
         }
     }
 
@@ -680,6 +735,8 @@ struct TodoSnapshot {
             try TodoRepository.setTags(db, taskID: todo.id, tagIDs: snapshot.tagIDs)
             try db.execute(sql: "DELETE FROM time_block WHERE taskID = ?", arguments: [todo.id])
             for block in snapshot.blocks { try block.insert(db) }
+            try db.execute(sql: "DELETE FROM progress_entry WHERE taskID = ?", arguments: [todo.id])
+            for entry in snapshot.progress { try entry.insert(db) }
         }
     }
 }

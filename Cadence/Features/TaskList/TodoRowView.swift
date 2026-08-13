@@ -33,6 +33,7 @@ struct TodoRowView: View {
                 // A second line only when there is something to put on it, so
                 // a plain task stays a single tidy line.
                 if !secondary.isEmpty { secondaryLine }
+                if let preview = notesPreview { notesLine(preview) }
             }
 
             Spacer(minLength: Metrics.regular)
@@ -93,7 +94,38 @@ struct TodoRowView: View {
         if let estimate = todo.estimateMinutes, detail.blocks.isEmpty {
             items.append(.estimate(estimate))
         }
+
+        // What has actually been put into this, as against what was planned.
+        // Recomputed from `model.clock`, so a running timer counts up here
+        // without this view owning a timer of its own.
+        let progress = detail.progress
+        if progress.isRunning {
+            items.append(.timing(progress.trackedSeconds(now: model.clock)))
+        } else if progress.trackedSeconds > 0 {
+            items.append(.tracked(progress.trackedSeconds))
+        }
+        // "Sitting for days but moving every day" is only visible if the last
+        // time it moved is on the row. Today's progress needs no announcement.
+        if let last = progress.lastAt, !progress.isRunning,
+           !Calendar.current.isDateInToday(last) {
+            items.append(.lastProgress(last))
+        }
         return items
+    }
+
+    /// The first line of the notes, so a task with context does not have to be
+    /// opened to see it.
+    private var notesPreview: String? {
+        guard editingID != todo.id else { return nil }
+        return detail.notesPreview
+    }
+
+    private func notesLine(_ text: String) -> some View {
+        Text(text)
+            .font(Typography.rowMeta)
+            .foregroundStyle(.tertiaryText)
+            .lineLimit(1)
+            .truncationMode(.tail)
     }
 
     private var secondaryLine: some View {
@@ -114,6 +146,15 @@ struct TodoRowView: View {
                 case .estimate(let minutes):
                     Text(Format.duration(minutes))
                         .monospacedDigit()
+                case .tracked(let seconds):
+                    Label(Format.duration(max(1, seconds / 60)), systemImage: "stopwatch")
+                        .monospacedDigit()
+                case .timing(let seconds):
+                    Label(Format.duration(max(1, seconds / 60)), systemImage: "stopwatch.fill")
+                        .monospacedDigit()
+                        .foregroundStyle(Color.accentColor)
+                case .lastProgress(let date):
+                    Text(Format.daysAgo(date, now: model.clock))
                 }
             }
         }
@@ -127,6 +168,10 @@ struct TodoRowView: View {
         case tag(Tag)
         case progress(Int, Int)
         case estimate(Int)
+        /// Time recorded against the task, and the same while it is running.
+        case tracked(Int)
+        case timing(Int)
+        case lastProgress(Date)
 
         var id: String {
             switch self {
@@ -134,6 +179,11 @@ struct TodoRowView: View {
             case .tag(let tag): "t\(tag.id)"
             case .progress(let done, let total): "c\(done)/\(total)"
             case .estimate(let minutes): "e\(minutes)"
+            // Not the seconds: an id that changes every tick makes SwiftUI
+            // tear the view down and build a new one once a minute.
+            case .tracked: "tracked"
+            case .timing: "timing"
+            case .lastProgress: "last"
             }
         }
     }
@@ -145,6 +195,20 @@ struct TodoRowView: View {
     @ViewBuilder
     private var trailing: some View {
         HStack(spacing: Metrics.regular) {
+            // Visible while timing, and on hover otherwise — the one control
+            // that has to be reachable without opening anything.
+            if isTiming || (isHovering && !todo.isCompleted) {
+                Button {
+                    model.toggleTimer(for: todo.id)
+                } label: {
+                    Image(systemName: isTiming ? "stop.circle.fill" : "play.circle")
+                        .font(.system(size: 13))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(isTiming ? Color.accentColor : .secondaryText)
+                .help(isTiming ? "Stop the timer" : "Start timing this task")
+            }
+
             if let symbol = todo.priority.symbolName {
                 Image(systemName: symbol)
                     .font(.system(size: 10, weight: .semibold))
@@ -172,6 +236,8 @@ struct TodoRowView: View {
             .help("Show details (⌘I)")
         }
     }
+
+    private var isTiming: Bool { model.isTiming(todo.id) }
 
     private func isOverdue(_ date: Date) -> Bool {
         !todo.isCompleted && date < Calendar.current.startOfDay(for: Date())

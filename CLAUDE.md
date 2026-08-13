@@ -154,6 +154,22 @@ capture, undo — maintains them without call-site logic:
 - a scheduled task's **estimate is its block's length**. Resizing changes the
   estimate; editing the estimate resizes the block.
 
+A `time_block` is a **plan**; `progress_entry` is the **record** — time actually
+spent (a `session`, running while `endedAt` is null — several may run at once,
+but never two on the same task) and
+notes on where the work got to. "A task with several time segments" belongs
+here, not in extra blocks: loosening the one-block rule would take the estimate
+invariant with it.
+
+On the grid both go through **one** layout pass (`CalendarLayout.position` over
+`GridEntry`), so a session overlapping the block that planned it sits beside it,
+the way any two overlapping events would. A narrow read-only lane was tried
+first, to stop planned blocks halving in width whenever a timer started; a lane
+narrow enough to leave the plan alone was too narrow to read, which defeats the
+point of keeping a record. `SessionBlockView` is styled unlike `BlockView` —
+dashed edge, lighter fill — and has a **minimum height**, since a ten-minute
+session is four points tall at the default zoom.
+
 ## What cannot be verified from here
 
 Screen recording is unavailable, so **drag-and-drop and general appearance have

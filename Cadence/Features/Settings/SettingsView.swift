@@ -23,6 +23,7 @@ struct SettingsView: View {
 }
 
 private struct PlanningSettings: View {
+    @Environment(AppModel.self) private var model
     @Environment(Preferences.self) private var preferences
     @AppStorage("showsMenuBarItem") private var showsMenuBarItem = true
 
@@ -53,6 +54,27 @@ private struct PlanningSettings: View {
                 Picker("Default estimate", selection: $preferences.defaultEstimateMinutes) {
                     ForEach([15, 25, 30, 45, 60, 90], id: \.self) { Text(Format.duration($0)).tag($0) }
                 }
+            }
+
+            Section("Timers") {
+                Toggle(
+                    "Time several tasks at once",
+                    isOn: Binding(
+                        get: { preferences.allowsConcurrentTimers },
+                        set: { allows in
+                            preferences.allowsConcurrentTimers = allows
+                            // Switching to one-at-a-time with three clocks
+                            // already going would leave a state the setting
+                            // says is impossible.
+                            if !allows { model.stopAllTimers() }
+                        }
+                    )
+                )
+                Text(preferences.allowsConcurrentTimers
+                     ? "Starting a timer leaves any others running."
+                     : "Starting a timer stops whatever else was running.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

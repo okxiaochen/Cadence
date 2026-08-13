@@ -324,6 +324,23 @@ enum Format {
         date.formatted(.dateTime.hour().minute())
     }
 
+    /// How long ago something happened, in whole days: "today", "yesterday",
+    /// "5d ago". Days rather than hours because that is the unit a task that
+    /// has been sitting around is measured in.
+    static func daysAgo(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let days = calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: date),
+            to: calendar.startOfDay(for: now)
+        ).day ?? 0
+        switch days {
+        case ..<0: return Self.date(date)
+        case 0: return "today"
+        case 1: return "yesterday"
+        default: return "\(days)d ago"
+        }
+    }
+
     /// "Today", "Tomorrow", "Overdue by 2d", or a short date.
     static func relativeDue(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
         let startOfToday = calendar.startOfDay(for: now)

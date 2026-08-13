@@ -130,6 +130,24 @@ CREATE TABLE time_block (
 );
 CREATE INDEX idx_block_range ON time_block(startAt, endAt);
 
+-- What actually happened on a task, as against the plan above. A `session` is
+-- time spent (running while endedAt is NULL — several tasks may run at once,
+-- never two on one task; `allowsConcurrentTimers` off makes it one at a time);
+-- a `note`
+-- is a line of progress with no duration. A task has at most one time_block but
+-- any number of these.
+CREATE TABLE progress_entry (
+  id        TEXT PRIMARY KEY,
+  taskID    TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+  kind      TEXT NOT NULL DEFAULT 'note',   -- session | note
+  note      TEXT NOT NULL DEFAULT '',
+  startedAt TEXT NOT NULL,
+  endedAt   TEXT,
+  createdAt TEXT NOT NULL
+);
+CREATE INDEX idx_progress_task  ON progress_entry(taskID, startedAt);
+CREATE INDEX idx_progress_range ON progress_entry(startedAt, endedAt);
+
 -- AI runs, for history and undo attribution
 CREATE TABLE ai_run (
   id          TEXT PRIMARY KEY,

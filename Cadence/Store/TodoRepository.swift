@@ -48,6 +48,7 @@ enum TodoRepository {
         let ids = Array(byID.keys)
         let tagsByTask = try tagMap(db, taskIDs: ids)
         let blocksByTask = try blockMap(db, taskIDs: ids)
+        let progressByTask = try ProgressRepository.summaries(db, taskIDs: ids)
         let projects = try Project.fetchAll(db)
         let projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
 
@@ -56,7 +57,8 @@ enum TodoRepository {
                 todo: todo,
                 project: todo.projectID.flatMap { projectsByID[$0] },
                 tags: tagsByTask[todo.id] ?? [],
-                blocks: blocksByTask[todo.id] ?? []
+                blocks: blocksByTask[todo.id] ?? [],
+                progress: progressByTask[todo.id] ?? ProgressSummary()
             )
         }
 
@@ -100,6 +102,7 @@ enum TodoRepository {
         let ids = [id] + children.map(\.id)
         let tagsByTask = try tagMap(db, taskIDs: ids)
         let blocksByTask = try blockMap(db, taskIDs: ids)
+        let progressByTask = try ProgressRepository.summaries(db, taskIDs: ids)
         let project = try todo.projectID.flatMap {
             try Project.fetchOne(db, sql: "SELECT * FROM project WHERE id = ?", arguments: [$0])
         }
@@ -109,8 +112,16 @@ enum TodoRepository {
             tags: tagsByTask[id] ?? [],
             blocks: blocksByTask[id] ?? [],
             children: children.map {
-                TodoDetail(todo: $0, project: project, tags: tagsByTask[$0.id] ?? [], blocks: blocksByTask[$0.id] ?? [])
-            }
+                TodoDetail(
+                    todo: $0,
+                    project: project,
+                    tags: tagsByTask[$0.id] ?? [],
+                    blocks: blocksByTask[$0.id] ?? [],
+                    progress: progressByTask[$0.id] ?? ProgressSummary()
+                )
+            },
+            progress: progressByTask[id] ?? ProgressSummary(),
+            progressEntries: try ProgressRepository.entries(db, taskID: id)
         )
     }
 
@@ -162,6 +173,107 @@ enum TodoRepository {
         try db.execute(sql: "DELETE FROM task_tag WHERE taskID = ?", arguments: [taskID])
         for tagID in Set(tagIDs) {
             try TaskTag(taskID: taskID, tagID: tagID).insert(db)
+        }
+    }
+
+    /// Moves a task to another day, keeping its time of day if it had one:
+    /// dragging a 10am task from Wednesday to Friday should still be 10am.
+    static func moveToDay(
+        _ db: Database,
+        id: String,
+        day: Date,
+        calendar: Calendar = .current
+    ) throws {
+        guard let todo = try fetch(db, id: id) else { return }
+        let block = try TimeBlock.fetchAll(
+            db,
+            sql: "SELECT * FROM time_block WHERE taskID = ? ORDER BY startAt",
+            arguments: [id]
+        ).first
+
+        if var block {
+            let time = calendar.dateComponents([.hour, .minute], from: block.startAt)
+            guard let start = calendar.date(
+                bySettingHour: time.hour ?? 9,
+                minute: time.minute ?? 0,
+                second: 0,
+                of: day
+            ) else { return }
+            let duration = block.endAt.timeIntervalSince(block.startAt)
+            block.startAt = start
+            block.endAt = start.addingTimeInterval(duration)
+            try updateBlock(db, block)
+        } else {
+            var updated = todo
+            updated.dueAt = calendar.startOfDay(for: day)
+            try update(db, updated)
+        }
+    }
+
+    /// Places `ids` immediately before or after `targetID` in manual order,
+    /// keeping the order they were given in.
+    ///
+    /// Sort orders are fractional so an insert is one UPDATE per moved row
+    /// rather than a renumber of the whole list — but repeated inserts into the
+    /// same gap do eventually exhaust it, so a gap too small to divide triggers
+    /// a renumber of the siblings first.
+    static func reorder(
+        _ db: Database,
+        ids: [String],
+        relativeTo targetID: String,
+        placeAfter: Bool
+    ) throws {
+        let moving = try fetch(db, ids: ids)
+        guard !moving.isEmpty, var target = try fetch(db, id: targetID) else { return }
+        let ordered = ids.compactMap { id in moving.first { $0.id == id } }
+
+        func neighbourOrder() throws -> Double? {
+            let comparison = placeAfter ? ">" : "<"
+            let extreme = placeAfter ? "MIN" : "MAX"
+            let excluded = ids + [targetID]
+            var arguments: [any DatabaseValueConvertible] = [target.sortOrder]
+            if let parentID = target.parentID { arguments.append(parentID) }
+            arguments.append(contentsOf: excluded)
+            return try Double.fetchOne(db, sql: """
+                SELECT \(extreme)(sortOrder) FROM task
+                WHERE sortOrder \(comparison) ?
+                  AND parentID IS \(target.parentID == nil ? "NULL" : "?")
+                  AND id NOT IN (\(placeholders(excluded.count)))
+                """, arguments: StatementArguments(arguments))
+        }
+
+        var lower = placeAfter ? target.sortOrder : (try neighbourOrder() ?? target.sortOrder - 2000)
+        var upper = placeAfter ? (try neighbourOrder() ?? target.sortOrder + 2000) : target.sortOrder
+
+        // The gap can no longer be divided into distinct doubles: spread the
+        // siblings back out on a whole-number scale and take the new bounds.
+        if (upper - lower) / Double(ordered.count + 1) < 0.000_001 {
+            try renumberSiblings(db, parentID: target.parentID)
+            guard let refreshed = try fetch(db, id: targetID) else { return }
+            target = refreshed
+            lower = placeAfter ? target.sortOrder : (try neighbourOrder() ?? target.sortOrder - 1000)
+            upper = placeAfter ? (try neighbourOrder() ?? target.sortOrder + 1000) : target.sortOrder
+        }
+
+        let step = (upper - lower) / Double(ordered.count + 1)
+        for (index, todo) in ordered.enumerated() {
+            var updated = todo
+            // A task dropped among a parent's children becomes one of them.
+            updated.parentID = target.parentID
+            updated.sortOrder = lower + step * Double(index + 1)
+            try update(db, updated)
+        }
+    }
+
+    private static func renumberSiblings(_ db: Database, parentID: String?) throws {
+        let sql = parentID == nil
+            ? "SELECT * FROM task WHERE parentID IS NULL ORDER BY sortOrder"
+            : "SELECT * FROM task WHERE parentID = ? ORDER BY sortOrder"
+        let arguments: StatementArguments = parentID == nil ? [] : [parentID]
+        for (index, todo) in try Todo.fetchAll(db, sql: sql, arguments: arguments).enumerated() {
+            var updated = todo
+            updated.sortOrder = Double((index + 1) * 1000)
+            try update(db, updated)
         }
     }
 

@@ -1,5 +1,12 @@
 import SwiftUI
 
+extension Notification.Name {
+    /// ⌘N. The menu command lives in the app's Commands, the composer lives in
+    /// whichever list is on screen, and a Scene cannot reach into a View's
+    /// `@FocusState` — so the two are joined by a notification.
+    static let focusComposer = Notification.Name("dev.xiaochen.Cadence.focusComposer")
+}
+
 struct TodoListView: View {
     @Environment(AppModel.self) private var model
 
@@ -10,6 +17,7 @@ struct TodoListView: View {
         @Bindable var model = model
 
         VStack(spacing: 0) {
+            TodoListHeaderBar()
             if model.isEmpty && model.query.searchText.isEmpty {
                 emptyState
             } else {
@@ -19,8 +27,14 @@ struct TodoListView: View {
         }
         .navigationTitle(navigationTitle)
         .searchable(text: $model.query.searchText, placement: .toolbar, prompt: "Search tasks")
-        .toolbar { toolbarContent }
         .onDeleteCommand(perform: deleteSelection)
+        // The toolbar's + is gone — the composer at the bottom of the list is
+        // already a permanent, visible "add a task" affordance, and a second
+        // one across the window said the same thing again. ⌘N comes from the
+        // File menu instead and lands the caret in that composer.
+        .onReceive(NotificationCenter.default.publisher(for: .focusComposer)) { _ in
+            isComposerFocused = true
+        }
     }
 
     // MARK: - List
@@ -50,6 +64,10 @@ struct TodoListView: View {
         }
     }
 
+    /// Dragging rows around only means something in manual order; under any
+    /// other sort the list would immediately put them back.
+    private var canReorder: Bool { model.query.sort == .manual }
+
     /// A day heading doubles as a drop target: dragging a task onto "Tomorrow"
     /// moves it to that day, keeping whatever time it already had.
     @ViewBuilder
@@ -77,11 +95,17 @@ struct TodoListView: View {
             TodoRowView(detail: item, editingID: $editingID, indent: 0)
                 .tag(item.id)
                 .listRowSeparator(.hidden)
+                .todoReorderTarget(isEnabled: canReorder) { ids, placeAfter in
+                    model.reorder(ids, relativeTo: item.id, placeAfter: placeAfter, day: section.date)
+                }
 
             ForEach(item.children) { child in
                 TodoRowView(detail: child, editingID: $editingID, indent: 1)
                     .tag(child.id)
                     .listRowSeparator(.hidden)
+                    .todoReorderTarget(isEnabled: canReorder) { ids, placeAfter in
+                        model.reorder(ids, relativeTo: child.id, placeAfter: placeAfter)
+                    }
             }
         }
 
@@ -96,6 +120,11 @@ struct TodoListView: View {
     private func contextMenu(for ids: [String]) -> some View {
         if !ids.isEmpty {
             Button("Complete") { model.setStatus(.done, for: ids) }
+            if ids.count == 1 {
+                Button(model.isTiming(ids[0]) ? "Stop Timer" : "Start Timer") {
+                    model.toggleTimer(for: ids[0])
+                }
+            }
             Menu("Priority") {
                 ForEach(Priority.allCases, id: \.self) { priority in
                     Button(priority.title) { model.setPriority(priority, for: ids) }
@@ -119,7 +148,7 @@ struct TodoListView: View {
     // MARK: - Composer
 
     private var composer: some View {
-        CaptureField(contextChips: contextChips) { parsed in
+        CaptureField(contextChips: contextChips, isFocused: $isComposerFocused) { parsed in
             addTask(parsed)
         }
         .padding(.horizontal, Metrics.loose)
@@ -163,35 +192,6 @@ struct TodoListView: View {
     }
 
     // MARK: - Toolbar
-
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        @Bindable var model = model
-
-        ToolbarItem {
-            Menu {
-                Picker("Group By", selection: $model.query.grouping) {
-                    ForEach(TodoGrouping.allCases) { Text($0.title).tag($0) }
-                }
-                Picker("Sort By", selection: $model.query.sort) {
-                    ForEach(TodoSort.allCases) { Text($0.title).tag($0) }
-                }
-                Divider()
-                Toggle("Show Completed", isOn: $model.query.showsCompleted)
-            } label: {
-                Label("View Options", systemImage: "line.3.horizontal.decrease.circle")
-            }
-        }
-
-        ToolbarItem {
-            Button {
-                isComposerFocused = true
-            } label: {
-                Label("New Task", systemImage: "plus")
-            }
-            .keyboardShortcut("n", modifiers: .command)
-        }
-    }
 
     private var navigationTitle: String {
         switch model.query.selection {

@@ -69,8 +69,8 @@ struct CadenceApp: App {
             // Icon plus a count, not the next task's title: a label whose width
             // changes every few minutes shoves every other status item sideways.
             // Two digits is a bounded, and therefore tolerable, amount of drift.
-            Image(systemName: "calendar.day.timeline.left")
-            Text(model.todayCountLabel)
+            Image(systemName: model.menuBarSymbol)
+            Text(model.menuBarLabel)
         }
         .menuBarExtraStyle(.window)
 
@@ -87,6 +87,12 @@ struct CadenceApp: App {
     @CommandsBuilder
     private var commands: some Commands {
         CommandGroup(after: .newItem) {
+            Button("New Task") {
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(name: .focusComposer, object: nil)
+            }
+            .keyboardShortcut("n", modifiers: .command)
+
             Button("Quick Capture") { quickCapture.show() }
                 .keyboardShortcut(.space, modifiers: .option)
         }

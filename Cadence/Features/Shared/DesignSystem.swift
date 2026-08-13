@@ -89,6 +89,204 @@ struct CircleCheckbox: View {
     }
 }
 
+// MARK: - Segmented control
+
+/// A segmented picker that does not paint an opaque chip.
+///
+/// AppKit's `.segmented` style draws its own bezel — a near-white capsule that
+/// punches a solid hole straight through the window material, so on a
+/// translucent window it is the brightest thing on screen. This says the same
+/// thing with a tinted fill on the selected segment and nothing at all behind
+/// the rest.
+struct QuietSegmentedPicker<Value: Hashable>: View {
+    var options: [(value: Value, title: String)]
+    @Binding var selection: Value
+
+    @State private var hovering: Value?
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.value) { option in
+                segment(option.value, title: option.title)
+            }
+        }
+    }
+
+    private func segment(_ value: Value, title: String) -> some View {
+        let isSelected = selection == value
+        return Text(title)
+            .font(.system(size: 12, weight: isSelected ? .medium : .regular))
+            .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondaryText))
+            .padding(.horizontal, Metrics.regular)
+            .padding(.vertical, 3)
+            .background {
+                RoundedRectangle(cornerRadius: Metrics.controlRadius - 1, style: .continuous)
+                    .fill(fill(isSelected: isSelected, isHovering: hovering == value))
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { selection = value }
+            .onHover { hovering = $0 ? value : (hovering == value ? nil : hovering) }
+    }
+
+    private func fill(isSelected: Bool, isHovering: Bool) -> Color {
+        if isSelected { return Color.primary.opacity(0.09) }
+        if isHovering { return .rowHover }
+        return .clear
+    }
+}
+
+// MARK: - Quiet controls
+
+/// Controls for a translucent surface.
+///
+/// Every stock AppKit control — a popup button, a stepper field, a bordered
+/// button, a `.roundedBorder` text field — paints its own near-white bezel.
+/// On a window whose whole point is that it is not opaque, each one is a solid
+/// chip punched through the material, and a form full of them is the brightest
+/// thing on screen. These say the same things with a tinted fill and nothing
+/// else, and put the actual editing widget inside a popover, which is its own
+/// surface and may be as opaque as it likes.
+struct QuietButtonStyle: ButtonStyle {
+    var prominent = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: prominent ? .medium : .regular))
+            .foregroundStyle(prominent ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
+            .padding(.horizontal, Metrics.regular)
+            .padding(.vertical, 3)
+            .background {
+                RoundedRectangle(cornerRadius: Metrics.controlRadius, style: .continuous)
+                    .fill(fill(pressed: configuration.isPressed))
+            }
+            .contentShape(Rectangle())
+    }
+
+    private func fill(pressed: Bool) -> Color {
+        let base = prominent ? Color.accentColor : Color.primary
+        return base.opacity(pressed ? 0.22 : (prominent ? 0.14 : 0.07))
+    }
+}
+
+extension ButtonStyle where Self == QuietButtonStyle {
+    /// A button that reads as a target without becoming a filled chip.
+    static var quiet: QuietButtonStyle { QuietButtonStyle() }
+    /// The one action a panel is actually for.
+    static var quietProminent: QuietButtonStyle { QuietButtonStyle(prominent: true) }
+}
+
+/// A popup button with no bezel: the value, a chevron, and a menu.
+struct QuietMenuPicker<Value: Hashable>: View {
+    var options: [(value: Value, title: String)]
+    @Binding var selection: Value
+
+    var body: some View {
+        Menu {
+            Picker("", selection: $selection) {
+                ForEach(options, id: \.value) { Text($0.title).tag($0.value) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            HStack(spacing: Metrics.tight) {
+                Text(title)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondaryText)
+            }
+            .padding(.horizontal, Metrics.snug)
+            .padding(.vertical, 3)
+            .background {
+                RoundedRectangle(cornerRadius: Metrics.controlRadius, style: .continuous)
+                    .fill(Color.primary.opacity(0.06))
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    private var title: String {
+        options.first { $0.value == selection }?.title ?? ""
+    }
+}
+
+/// A date shown as text; editing it happens in a popover.
+struct QuietDateField: View {
+    @Binding var date: Date
+    /// Whether the time of day is part of this value.
+    var includesTime: Bool = false
+    /// Show only the time — for a field that sits beside a separate day field.
+    var timeOnly: Bool = false
+
+    @State private var isEditing = false
+
+    var body: some View {
+        Button { isEditing = true } label: {
+            Text(label).monospacedDigit()
+        }
+        .buttonStyle(.quiet)
+        .popover(isPresented: $isEditing) {
+            editor.padding(Metrics.comfortable)
+        }
+    }
+
+    /// Inside a popover the stock pickers are fine: a popover is a surface of
+    /// its own, not a hole in the window. The two styles are different types,
+    /// so they cannot be chosen with a ternary.
+    @ViewBuilder
+    private var editor: some View {
+        if timeOnly {
+            DatePicker("", selection: $date, displayedComponents: [.hourAndMinute])
+                .datePickerStyle(.stepperField)
+                .labelsHidden()
+        } else {
+            DatePicker(
+                "",
+                selection: $date,
+                displayedComponents: includesTime ? [.date, .hourAndMinute] : [.date]
+            )
+            .datePickerStyle(.graphical)
+            .labelsHidden()
+        }
+    }
+
+    private var label: String {
+        if timeOnly { return Format.time(date) }
+        return includesTime ? Format.dateTime(date) : Format.date(date)
+    }
+}
+
+/// A text field with a fill instead of a bezel.
+struct QuietFieldStyle: ViewModifier {
+    var width: CGFloat?
+
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .padding(.horizontal, Metrics.snug)
+            .padding(.vertical, 3)
+            .frame(width: width, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: Metrics.controlRadius, style: .continuous)
+                    .fill(Color.primary.opacity(0.06))
+            }
+    }
+}
+
+extension View {
+    func quietField(width: CGFloat? = nil) -> some View {
+        modifier(QuietFieldStyle(width: width))
+    }
+
+    /// A borderless icon button — the small clear/toggle affordances that sit
+    /// beside a field and should never look like buttons in their own right.
+    func quietIconButton() -> some View {
+        buttonStyle(.plain)
+    }
+}
+
 // MARK: - Row background
 
 /// The inset, rounded background every list row shares.

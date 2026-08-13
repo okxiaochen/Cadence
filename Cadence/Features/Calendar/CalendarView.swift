@@ -75,13 +75,17 @@ struct CalendarView: View {
                 .foregroundStyle(.secondaryText)
             Spacer()
             if model.eventKit.access != .denied {
+                // A link, not a bordered button: this is a one-off invitation
+                // sitting on a translucent banner, and a filled capsule there
+                // reads as the loudest control in the window.
                 Button("Connect Calendar") {
                     Task {
                         await model.eventKit.requestAccess()
                         model.refreshBusyEvents()
                     }
                 }
-                .controlSize(.small)
+                .buttonStyle(.link)
+                .font(Typography.rowMeta.weight(.medium))
             }
         }
         .padding(.horizontal, Metrics.comfortable)
@@ -132,8 +136,24 @@ struct CalendarView: View {
             ZStack(alignment: .topLeading) {
                 DayBackgrounds(geometry: geometry, model: model, preferences: preferences)
 
-                ForEach(model.positionedBlocks) { positioned in
-                    blockView(positioned, geometry: geometry)
+                // The plan and the record, in one layout: what actually
+                // happened sits beside what was planned for that hour.
+                ForEach(model.positionedEntries) { positioned in
+                    switch positioned.entry.kind {
+                    case .planned(let block):
+                        blockView(
+                            PositionedBlock(
+                                block: block,
+                                dayIndex: positioned.dayIndex,
+                                column: positioned.column,
+                                columnCount: positioned.columnCount,
+                                span: positioned.span
+                            ),
+                            geometry: geometry
+                        )
+                    case .tracked(let session):
+                        sessionView(session, positioned: positioned, geometry: geometry)
+                    }
                 }
 
                 if let drag, drag.isDuplicate {
@@ -224,6 +244,9 @@ struct CalendarView: View {
         }
         .contextMenu {
             Button("Show Details…") { model.inspectedID = positioned.block.todo.id }
+            Button(model.isTiming(positioned.block.todo.id) ? "Stop Timer" : "Start Timer") {
+                model.toggleTimer(for: positioned.block.todo.id)
+            }
             Divider()
             Menu("Duration") {
                 ForEach([15, 30, 45, 60, 90, 120], id: \.self) { minutes in
@@ -236,6 +259,46 @@ struct CalendarView: View {
             Button("Unschedule") { model.deleteBlock(positioned.id) }
         }
         .zIndex(isDragging ? 10 : 0)
+    }
+
+    /// Recorded time. Not draggable: a record of what happened is corrected in
+    /// the inspector, where the exact times are, rather than by nudging it
+    /// around a grid.
+    @ViewBuilder
+    private func sessionView(
+        _ session: TrackedSession,
+        positioned: PositionedEntry,
+        geometry: CalendarGeometry
+    ) -> some View {
+        let rect = geometry.rect(
+            interval: positioned.entry.interval,
+            dayIndex: positioned.dayIndex,
+            column: positioned.column,
+            columnCount: positioned.columnCount,
+            span: positioned.span
+        )
+
+        SessionBlockView(
+            session: session,
+            interval: positioned.entry.interval,
+            // A ten-minute session is four points tall at the default zoom —
+            // true to the clock and useless to read. Recorded time gets a floor
+            // so its title always has somewhere to go.
+            height: max(SessionBlockView.minimumHeight, rect.height)
+        )
+        .frame(width: rect.width, alignment: .top)
+        .offset(x: rect.minX, y: rect.minY)
+        .onTapGesture { model.inspectedID = session.todo.id }
+        .contextMenu {
+            Button("Show Details…") { model.inspectedID = session.todo.id }
+            if session.entry.isRunning {
+                Button("Stop Timer") { model.stopTimer(for: session.todo.id) }
+            }
+            Divider()
+            Button("Delete Entry", role: .destructive) {
+                model.deleteProgress(session.entry)
+            }
+        }
     }
 
     @ViewBuilder
@@ -448,11 +511,10 @@ private struct CalendarHeaderBar: View {
 
             Spacer(minLength: 8)
 
-            Picker("", selection: $model.calendarScale) {
-                ForEach(CalendarScale.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            QuietSegmentedPicker(
+                options: CalendarScale.allCases.map { ($0, $0.title) },
+                selection: $model.calendarScale
+            )
             .fixedSize()
 
             if showsZoom {

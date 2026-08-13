@@ -27,6 +27,8 @@ struct TaskDetailView: View {
                 Divider()
                 notesSection
                 Divider()
+                ProgressSection(detail: detail)
+                Divider()
                 subtasksSection
                 if !detail.blocks.isEmpty {
                     Divider()
@@ -83,35 +85,34 @@ struct TaskDetailView: View {
     private var attributes: some View {
         VStack(alignment: .leading, spacing: 12) {
             LabeledContent("Status") {
-                Picker("", selection: $draft.status) {
-                    ForEach(TodoStatus.selectable, id: \.self) { Text($0.title).tag($0) }
-                }
-                .labelsHidden()
+                QuietMenuPicker(
+                    options: TodoStatus.selectable.map { ($0, $0.title) },
+                    selection: $draft.status
+                )
                 .onChange(of: draft.status) { _, newValue in
                     model.setStatus(newValue, for: [draft.id])
                 }
             }
 
             LabeledContent("Project") {
-                Picker("", selection: Binding(
-                    get: { draft.projectID ?? "" },
-                    set: { newValue in
-                        let id = newValue.isEmpty ? nil : newValue
-                        draft.projectID = id
-                        model.setProject(id, for: [draft.id])
-                    }
-                )) {
-                    Text("None").tag("")
-                    ForEach(model.projects) { Text($0.name).tag($0.id) }
-                }
-                .labelsHidden()
+                QuietMenuPicker(
+                    options: [("", "None")] + model.projects.map { ($0.id, $0.name) },
+                    selection: Binding(
+                        get: { draft.projectID ?? "" },
+                        set: { newValue in
+                            let id = newValue.isEmpty ? nil : newValue
+                            draft.projectID = id
+                            model.setProject(id, for: [draft.id])
+                        }
+                    )
+                )
             }
 
             LabeledContent("Priority") {
-                Picker("", selection: $draft.priority) {
-                    ForEach(Priority.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .labelsHidden()
+                QuietMenuPicker(
+                    options: Priority.allCases.map { ($0, $0.title) },
+                    selection: $draft.priority
+                )
                 .onChange(of: draft.priority) { _, newValue in
                     model.setPriority(newValue, for: [draft.id])
                 }
@@ -306,8 +307,7 @@ private struct DurationField: View {
     var body: some View {
         HStack(spacing: 4) {
             TextField("e.g. 45m, 2h", text: $text)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 84)
+                .quietField(width: 84)
                 .onAppear { text = minutes.map(Format.duration) ?? "" }
                 .onChange(of: minutes) { _, newValue in
                     text = newValue.map(Format.duration) ?? ""
@@ -323,9 +323,10 @@ private struct DurationField: View {
                     Button("None") { onChange(nil) }
                 }
             } label: {
-                Image(systemName: "chevron.down")
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .fixedSize()
         }
     }
@@ -350,28 +351,23 @@ private struct WhenRow: View {
         LabeledContent("When") {
             HStack(spacing: 6) {
                 if let date {
-                    DatePicker(
-                        "",
-                        selection: Binding(
+                    QuietDateField(
+                        date: Binding(
                             get: { date },
                             set: { onChange($0, hasTime) }
                         ),
-                        displayedComponents: hasTime ? [.date, .hourAndMinute] : [.date]
+                        includesTime: hasTime
                     )
-                    .labelsHidden()
 
-                    Toggle(isOn: Binding(
-                        get: { hasTime },
-                        set: { wantsTime in
-                            onChange(
-                                wantsTime ? defaultTime(on: date) : date,
-                                wantsTime
-                            )
-                        }
-                    )) {
-                        Image(systemName: "clock")
+                    Button {
+                        onChange(hasTime ? date : defaultTime(on: date), !hasTime)
+                    } label: {
+                        Image(systemName: hasTime ? "clock.fill" : "clock")
+                            .font(.system(size: 11))
+                            .foregroundStyle(hasTime ? AnyShapeStyle(Color.accentColor)
+                                                     : AnyShapeStyle(.secondaryText))
                     }
-                    .toggleStyle(.button)
+                    .quietIconButton()
                     .help(hasTime ? "Remove the time — make it all-day" : "Add a time")
 
                     Button {
@@ -379,7 +375,7 @@ private struct WhenRow: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
                     }
-                    .buttonStyle(.plain)
+                    .quietIconButton()
                 } else {
                     Button("Set") {
                         onChange(Calendar.current.startOfDay(for: Date()), false)
@@ -410,18 +406,17 @@ private struct OptionalDateRow: View {
         LabeledContent(title) {
             HStack(spacing: 4) {
                 if let unwrapped = date {
-                    DatePicker("", selection: Binding(
+                    QuietDateField(date: Binding(
                         get: { unwrapped },
                         set: { date = $0; onCommit() }
-                    ), displayedComponents: [.date])
-                        .labelsHidden()
+                    ))
                     Button {
                         date = nil
                         onCommit()
                     } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
                     }
-                    .buttonStyle(.plain)
+                    .quietIconButton()
                 } else {
                     Button("Set") {
                         date = Calendar.current.startOfDay(for: Date())

@@ -159,6 +159,29 @@ final class AppDatabase {
                 """)
         }
 
+        // M6: what actually happened on a task, as against what was planned.
+        //
+        // One timeline per task holding two kinds of entry: a `session` with a
+        // start and (once stopped) an end, and a `note` — a line of "here is
+        // where I got to" with no duration. Deliberately its own table rather
+        // than more `time_block` rows: a block is a *plan*, and a task still
+        // has at most one of those (see TodoRepository).
+        migrator.registerMigration("v6_progress") { db in
+            try db.execute(sql: """
+                CREATE TABLE progress_entry (
+                  id        TEXT PRIMARY KEY,
+                  taskID    TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+                  kind      TEXT NOT NULL DEFAULT 'note',
+                  note      TEXT NOT NULL DEFAULT '',
+                  startedAt TEXT NOT NULL,
+                  endedAt   TEXT,
+                  createdAt TEXT NOT NULL
+                );
+                CREATE INDEX idx_progress_task  ON progress_entry(taskID, startedAt);
+                CREATE INDEX idx_progress_range ON progress_entry(startedAt, endedAt);
+                """)
+        }
+
         return migrator
     }
 }

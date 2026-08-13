@@ -17,6 +17,7 @@ final class Preferences {
         workdayEndHour = defaults.integer(forKey: Key.workdayEnd, default: 18)
         includesWeekends = defaults.bool(forKey: Key.includesWeekends, default: false)
         defaultEstimateMinutes = defaults.integer(forKey: Key.defaultEstimate, default: 30)
+        allowsConcurrentTimers = defaults.bool(forKey: Key.concurrentTimers, default: true)
         snapMinutes = defaults.integer(forKey: Key.snapMinutes, default: 15)
         storedHourHeight = min(200, max(24, defaults.double(forKey: Key.hourHeight, default: 48)))
         hiddenCalendarIDs = Set(defaults.stringArray(forKey: Key.hiddenCalendars) ?? [])
@@ -35,6 +36,14 @@ final class Preferences {
     var workdayEndHour: Int { didSet { defaults.set(workdayEndHour, forKey: Key.workdayEnd) } }
     var includesWeekends: Bool { didSet { defaults.set(includesWeekends, forKey: Key.includesWeekends) } }
     var defaultEstimateMinutes: Int { didSet { defaults.set(defaultEstimateMinutes, forKey: Key.defaultEstimate) } }
+
+    /// Whether several tasks may be timed at once. On by default: work really
+    /// does interleave, and a timer that stops your other timer silently loses
+    /// the time it refused to record. Switch it off to have starting one task
+    /// stop the rest.
+    var allowsConcurrentTimers: Bool {
+        didSet { defaults.set(allowsConcurrentTimers, forKey: Key.concurrentTimers) }
+    }
 
     // MARK: - Calendar view
 
@@ -82,6 +91,32 @@ final class Preferences {
         didSet { defaults.set(Array(hiddenCalendarIDs), forKey: Key.hiddenCalendars) }
     }
 
+    // MARK: - Per-list view options
+
+    /// How each list is grouped and sorted, remembered per list.
+    ///
+    /// Global would be wrong: "group Anytime by project" and "leave Today as a
+    /// flat list" are both reasonable at the same time, and having to re-pick
+    /// on every switch is why the menu felt like it did nothing.
+    func viewOptions(for selection: SidebarSelection) -> (grouping: TodoGrouping, sort: TodoSort)? {
+        guard let stored = defaults.dictionary(forKey: Key.viewOptions)?[selection.storageKey]
+                as? [String: String] else { return nil }
+        guard let grouping = stored["grouping"].flatMap(TodoGrouping.init(rawValue:)),
+              let sort = stored["sort"].flatMap(TodoSort.init(rawValue:))
+        else { return nil }
+        return (grouping, sort)
+    }
+
+    func setViewOptions(
+        grouping: TodoGrouping,
+        sort: TodoSort,
+        for selection: SidebarSelection
+    ) {
+        var all = defaults.dictionary(forKey: Key.viewOptions) as? [String: [String: String]] ?? [:]
+        all[selection.storageKey] = ["grouping": grouping.rawValue, "sort": sort.rawValue]
+        defaults.set(all, forKey: Key.viewOptions)
+    }
+
     // MARK: - Derived
 
     /// The working-hours window for a given day, or nil on a non-working day.
@@ -103,12 +138,14 @@ final class Preferences {
         static let workdayEnd = "workdayEndHour"
         static let includesWeekends = "includesWeekends"
         static let defaultEstimate = "defaultEstimateMinutes"
+        static let concurrentTimers = "allowsConcurrentTimers"
         static let snapMinutes = "snapMinutes"
         static let hourHeight = "hourHeight"
         static let hiddenCalendars = "hiddenCalendarIDs"
         static let backgroundStyle = "backgroundStyle"
         static let backgroundOpacity = "backgroundOpacity"
         static let appearance = "appAppearance"
+        static let viewOptions = "listViewOptions"
     }
 }
 

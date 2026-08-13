@@ -13,6 +13,7 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            runningBar
             header
             Divider()
 
@@ -50,6 +51,48 @@ struct MenuBarView: View {
     }
 
     // MARK: - Header
+
+    /// Running timers outrank the agenda: they are the thing costing you
+    /// something while the app is off screen.
+    @ViewBuilder
+    private var runningBar: some View {
+        if !model.runningEntries.isEmpty {
+            VStack(spacing: 6) {
+                ForEach(model.runningEntries) { entry in
+                    runningRow(entry)
+                }
+                if model.runningEntries.count > 1 {
+                    HStack {
+                        Spacer()
+                        Button("Stop All") { model.stopAllTimers() }
+                            .buttonStyle(.quiet)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+        }
+    }
+
+    private func runningRow(_ entry: ProgressEntry) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "stopwatch.fill").foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(model.runningTodo(entry.taskID)?.title ?? "Timing")
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text("since \(Format.time(entry.startedAt))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(Format.duration(max(1, model.runningSeconds(for: entry.taskID) / 60)))
+                .font(.callout.monospacedDigit().weight(.medium))
+            Button("Stop") { model.stopTimer(for: entry.taskID) }
+                .buttonStyle(.quiet)
+        }
+    }
 
     @ViewBuilder
     private var header: some View {
@@ -180,6 +223,8 @@ private struct AgendaRow: View {
 
     @State private var isHovering = false
 
+    private var isTiming: Bool { model.isTiming(item.todo.id) }
+
     var body: some View {
         HStack(spacing: 8) {
             Toggle(isOn: Binding(
@@ -213,12 +258,30 @@ private struct AgendaRow: View {
 
             Spacer(minLength: 0)
 
-            if item.isUnderway(now) {
+            // Timing from here, without opening the app — the menu bar is
+            // where you are when you actually start work.
+            if isTiming {
+                Text(Format.duration(max(1, model.runningSeconds(for: item.todo.id) / 60)))
+                    .font(.caption2.monospacedDigit().weight(.medium))
+                    .foregroundStyle(.tint)
+            } else if item.isUnderway(now) {
                 Text("now")
                     .font(.caption2.weight(.semibold))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(.tint.opacity(0.2), in: Capsule())
+            }
+
+            if isTiming || isHovering {
+                Button {
+                    model.toggleTimer(for: item.todo.id)
+                } label: {
+                    Image(systemName: isTiming ? "stop.circle.fill" : "play.circle")
+                        .font(.system(size: 13))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(isTiming ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .help(isTiming ? "Stop the timer" : "Start timing this task")
             }
         }
         .padding(.horizontal, 12)

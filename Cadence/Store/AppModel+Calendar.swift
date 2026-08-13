@@ -29,6 +29,7 @@ extension AppModel {
         let observation = ValueObservation.tracking { db in
             CalendarSnapshot(
                 blocks: try TodoRepository.scheduledBlocks(db, in: range),
+                sessions: try ProgressRepository.sessions(db, in: range),
                 unscheduled: try TodoRepository.unscheduled(db),
                 due: try TodoRepository.allDay(db, in: range)
             )
@@ -42,6 +43,7 @@ extension AppModel {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.scheduledBlocks = snapshot.blocks
+                    self.trackedSessions = snapshot.sessions
                     self.unscheduled = snapshot.unscheduled
                     self.dueInRange = snapshot.due
                     if let selected = self.selectedBlockID,
@@ -81,8 +83,12 @@ extension AppModel {
         }
     }
 
-    var positionedBlocks: [PositionedBlock] {
-        CalendarLayout.position(scheduledBlocks, days: visibleDays)
+    /// Everything the grid draws — the plan and the record — laid out together,
+    /// so an overlap between them is resolved the way any other overlap is.
+    var positionedEntries: [PositionedEntry] {
+        let planned = scheduledBlocks.map(GridEntry.init(planned:))
+        let tracked = trackedSessions.compactMap { GridEntry(tracked: $0, now: clock) }
+        return CalendarLayout.position(planned + tracked, days: visibleDays)
     }
 
     /// All-day events, grouped by the day column they belong to.
@@ -99,6 +105,16 @@ extension AppModel {
         return dueInRange.filter { detail in
             guard let dueAt = detail.todo.dueAt else { return false }
             return calendar.isDate(dueAt, inSameDayAs: day)
+        }
+    }
+
+    /// Recorded sessions that started on `day`. A session running past midnight
+    /// stays in the column it began in rather than being split in two — it is
+    /// one stretch of work, and cutting it would double the entries you see.
+    func sessions(on day: Date) -> [TrackedSession] {
+        let calendar = Calendar.current
+        return trackedSessions.filter {
+            calendar.isDate($0.entry.startedAt, inSameDayAs: day)
         }
     }
 
@@ -210,6 +226,7 @@ extension AppModel {
 
 private struct CalendarSnapshot: Equatable {
     var blocks: [ScheduledBlock]
+    var sessions: [TrackedSession]
     var unscheduled: [TodoDetail]
     var due: [TodoDetail]
 }

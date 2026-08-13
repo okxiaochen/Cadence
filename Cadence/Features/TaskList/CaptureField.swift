@@ -11,11 +11,14 @@ struct CaptureField: View {
     var placeholder: String = "New task — try  #tag @project !2 ~45m tomorrow"
     /// Extra context shown as chips, e.g. the list the task will land in.
     var contextChips: [String] = []
+    /// Owned by the parent so ⌘N and the toolbar's + can put the caret here.
+    /// Kept internal to this view for a while, which quietly made both of them
+    /// do nothing at all.
+    @FocusState.Binding var isFocused: Bool
     var onSubmit: (ParsedCapture) -> Void
 
     @State private var text = ""
     @State private var highlighted = 0
-    @FocusState private var isFocused: Bool
 
     private var parsed: ParsedCapture { CaptureParser.parse(text) }
 

@@ -99,6 +99,76 @@ extension View {
     }
 }
 
+// MARK: - Reordering
+
+/// Drop between rows: the top half of a row means "above this", the bottom half
+/// "below it", with a line showing where it will land.
+///
+/// The halves are `background`, not `overlay`: an overlay above the row swallows
+/// the press that starts the row's own drag, so rows could be dropped onto but
+/// never picked up.
+struct TodoReorderTarget: ViewModifier {
+    /// Manual order is the only order a drop can express. Sorted by due date,
+    /// dropping a task somewhere would be undone by the next re-sort, so the
+    /// target is simply not offered.
+    var isEnabled: Bool
+    var onDrop: @MainActor (_ ids: [String], _ placeAfter: Bool) -> Void
+
+    @State private var targetedEdge: VerticalEdge?
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                if isEnabled {
+                    VStack(spacing: 0) {
+                        half(.top)
+                        half(.bottom)
+                    }
+                }
+            }
+            .overlay(alignment: targetedEdge == .top ? .top : .bottom) {
+                if targetedEdge != nil {
+                    Capsule()
+                        .fill(Color.accentColor)
+                        .frame(height: 2)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+
+    private func half(_ edge: VerticalEdge) -> some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onDrop(
+                of: [TaskDrag.typeIdentifier],
+                isTargeted: Binding(
+                    get: { targetedEdge == edge },
+                    set: { isTargeted in
+                        if isTargeted {
+                            targetedEdge = edge
+                        } else if targetedEdge == edge {
+                            targetedEdge = nil
+                        }
+                    }
+                )
+            ) { providers in
+                targetedEdge = nil
+                return TaskDrag.todoIDs(from: providers) { ids in
+                    onDrop(ids, edge == .bottom)
+                }
+            }
+    }
+}
+
+extension View {
+    func todoReorderTarget(
+        isEnabled: Bool,
+        perform: @escaping @MainActor ([String], Bool) -> Void
+    ) -> some View {
+        modifier(TodoReorderTarget(isEnabled: isEnabled, onDrop: perform))
+    }
+}
+
 // MARK: - Positional destination
 
 /// The calendar needs the drop *point* to turn it into a time, which the plain

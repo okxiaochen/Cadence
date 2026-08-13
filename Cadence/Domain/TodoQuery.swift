@@ -30,6 +30,15 @@ enum SidebarSelection: Hashable {
     case smart(SmartList)
     case project(String)
     case tag(String)
+
+    /// Stable key for remembering how this list is grouped and sorted.
+    var storageKey: String {
+        switch self {
+        case .smart(let list): "smart.\(list.rawValue)"
+        case .project(let id): "project.\(id)"
+        case .tag(let id): "tag.\(id)"
+        }
+    }
 }
 
 // MARK: - Grouping & sorting
