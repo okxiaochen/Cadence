@@ -18,6 +18,15 @@ struct CadenceApp: App {
     /// the app spins at 100% CPU. This projected binding is stable.
     @AppStorage("showsMenuBarItem") private var showsMenuBarItem = true
 
+    /// Available in `App` scope, which is what lets a menu command open a
+    /// window without routing through a view.
+    @Environment(\.openWindow) private var openWindow
+
+    private func openReportWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: "report")
+    }
+
     init() {
         let database: AppDatabase
         var failure: String?
@@ -52,14 +61,30 @@ struct CadenceApp: App {
                     if let startupError { model.errorMessage = startupError }
                     await notifications.refreshAuthorization()
                     await updater.checkInBackground()
-                    GlobalHotkey.shared.onFire = { [quickCapture] in
+                    GlobalHotkey.shared.register(.quickCapture) { [quickCapture] in
                         Task { @MainActor in quickCapture.toggle() }
                     }
-                    GlobalHotkey.shared.register()
+                    // ⌥⇧Space: start or stop the clock without leaving
+                    // whatever you are actually working in.
+                    GlobalHotkey.shared.register(
+                        .toggleTimer,
+                        modifiers: GlobalHotkey.Modifiers.optionShift
+                    ) { [model] in
+                        Task { @MainActor in model.toggleTimerForFocusedTask() }
+                    }
                 }
         }
         .defaultSize(width: 1200, height: 760)
         .commands { commands }
+
+        // Its own window rather than a fourth workspace mode: this is something
+        // you open on a Friday and close again, not a way of working.
+        Window("Time Report", id: "report") {
+            TimeReportView()
+                .environment(model)
+                .environment(preferences)
+        }
+        .defaultSize(width: 520, height: 620)
 
         MenuBarExtra(isInserted: $showsMenuBarItem) {
             MenuBarView()
@@ -98,6 +123,11 @@ struct CadenceApp: App {
         }
 
         CommandGroup(before: .toolbar) {
+            Button("Time Report") { openReportWindow() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+
+            Divider()
+
             Picker("View", selection: $mode) {
                 Text("List").tag(WorkspaceMode.list)
                 Text("Calendar").tag(WorkspaceMode.calendar)

@@ -167,6 +167,13 @@ enum TodoRepository {
         todo.status = status
         todo.completedAt = status.isTerminal ? now : nil
         try update(db, todo)
+        // Finishing something stops its clock. Here rather than at the call
+        // sites so every path maintains it — checking a row off, the context
+        // menu, ⌘⏎, an AI turn — and so a completed task can never go on
+        // quietly accruing time in the menu bar.
+        if status.isTerminal {
+            try ProgressRepository.stopSession(db, taskID: id, at: now)
+        }
     }
 
     static func setTags(_ db: Database, taskID: String, tagIDs: [String]) throws {
@@ -517,7 +524,16 @@ enum TodoRepository {
 
         let search = query.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !search.isEmpty {
-            clauses.append("(title LIKE :search OR notes LIKE :search)")
+            // The timeline is searched too: "blocked on the API" is exactly the
+            // sort of sentence you go looking for weeks later, and it lives in
+            // a progress entry rather than in the notes.
+            clauses.append("""
+                (title LIKE :search OR notes LIKE :search
+                 OR EXISTS (
+                   SELECT 1 FROM progress_entry p
+                   WHERE p.taskID = task.id AND p.note LIKE :search
+                 ))
+                """)
             args["search"] = "%\(search)%"
         }
 

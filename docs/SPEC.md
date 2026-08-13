@@ -143,7 +143,8 @@ CREATE TABLE progress_entry (
   note      TEXT NOT NULL DEFAULT '',
   startedAt TEXT NOT NULL,
   endedAt   TEXT,
-  createdAt TEXT NOT NULL
+  createdAt TEXT NOT NULL,
+  externalEventID TEXT   -- set when publishing tracked time to Apple Calendar
 );
 CREATE INDEX idx_progress_task  ON progress_entry(taskID, startedAt);
 CREATE INDEX idx_progress_range ON progress_entry(startedAt, endedAt);

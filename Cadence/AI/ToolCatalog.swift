@@ -51,7 +51,7 @@ final class ToolCatalog: @unchecked Sendable {
     // MARK: - Descriptors
 
     func tools() -> [MCPTool] {
-        readTools + proposalTools + memoryTools + [
+        readTools + progressTools + proposalTools + memoryTools + [
             MCPTool(
                 name: "explain",
                 description: "Call this LAST. Summarise what you did in one paragraph "
@@ -183,6 +183,62 @@ final class ToolCatalog: @unchecked Sendable {
         ]
     }
 
+    /// What actually happened, as against what was planned.
+    ///
+    /// Estimates are guesses; this is the only evidence in the database that
+    /// can contradict one. Without it the assistant plans from the user's
+    /// optimism and has no way to notice a task that always takes twice as
+    /// long as it is given.
+    private var progressTools: [MCPTool] {
+        [
+            MCPTool(
+                name: "get_time_report",
+                description: "Time actually recorded in a date range, totalled by "
+                    + "project and by task, plus the progress notes written in that "
+                    + "period. Use for “what did I get done last week”, and before "
+                    + "planning a similar week.",
+                inputSchema: object([
+                    "from": string("ISO 8601 start, inclusive"),
+                    "to": string("ISO 8601 end, exclusive"),
+                    "includeNotes": boolean("Include the progress notes (default true)")
+                ], required: ["from", "to"])
+            ),
+            MCPTool(
+                name: "get_estimate_history",
+                description: "How long finished tasks like this one actually took, from "
+                    + "their tags or failing that their project. Call before estimating: "
+                    + "the median here beats a guess, and the ratio says whether this "
+                    + "kind of work is habitually under-estimated.",
+                inputSchema: object(["id": string("Task id")], required: ["id"])
+            ),
+            MCPTool(
+                name: "log_progress",
+                description: "Add a line to a task's timeline: what got done, or what "
+                    + "it is stuck on. Saved immediately — this is a journal entry, not "
+                    + "an edit to the task, so it needs no review.\n\n"
+                    + "Use when the user tells you what they did. Do not use it to "
+                    + "restate the task, and never invent progress they did not report.",
+                inputSchema: object([
+                    "id": string("Task id"),
+                    "note": string("One line, in the user's own terms"),
+                    "at": string("ISO 8601 when it happened (default: now)")
+                ], required: ["id", "note"])
+            ),
+            MCPTool(
+                name: "log_time",
+                description: "Record time already spent on a task — a session the user "
+                    + "did not time. Saved immediately. Never guess the duration: only "
+                    + "record what the user actually told you.",
+                inputSchema: object([
+                    "id": string("Task id"),
+                    "from": string("ISO 8601 start"),
+                    "to": string("ISO 8601 end"),
+                    "note": string("What got done in it")
+                ], required: ["id", "from", "to"])
+            )
+        ]
+    }
+
     private var memoryTools: [MCPTool] {
         [
             MCPTool(
@@ -243,6 +299,10 @@ final class ToolCatalog: @unchecked Sendable {
         case "propose_schedule": return try proposeSchedule(arguments)
         case "propose_move_block": return try proposeMoveBlock(arguments)
         case "propose_delete_block": return try proposeDeleteBlock(arguments)
+        case "get_time_report": return try getTimeReport(arguments)
+        case "get_estimate_history": return try getEstimateHistory(arguments)
+        case "log_progress": return try logProgress(arguments)
+        case "log_time": return try logTime(arguments)
         case "get_memory": return try getMemory(arguments)
         case "search_memories": return try searchMemories(arguments)
         case "remember": return try remember(arguments)
@@ -301,7 +361,132 @@ final class ToolCatalog: @unchecked Sendable {
             payload["notes"] = detail.todo.notes
             payload["subtasks"] = try detail.children.map { try self.encode($0.todo, db: db) }
             payload["blocks"] = detail.blocks.map(self.encode)
+            // What actually happened on it, newest first — the evidence behind
+            // "this has been open for a fortnight": either nothing was done, or
+            // plenty was and it is bigger than it looked.
+            payload["progress"] = detail.progressEntries.map { entry in
+                var line: [String: Any] = [
+                    "kind": entry.kind.rawValue,
+                    "at": ISO.string(entry.startedAt)
+                ]
+                if entry.kind == .session {
+                    line["minutes"] = entry.minutes()
+                    line["running"] = entry.isRunning
+                }
+                if !entry.note.isEmpty { line["note"] = entry.note }
+                return line
+            }
             return payload
+        }
+    }
+
+    // MARK: - Progress tools
+
+    private func getTimeReport(_ args: [String: Any]) throws -> Any {
+        guard let from = try args.date("from") else { throw ToolError.missingArgument("from") }
+        guard let to = try args.date("to") else { throw ToolError.missingArgument("to") }
+        guard to > from else {
+            throw ToolError.badArgument("to", "must be after from")
+        }
+        let includeNotes = args.bool("includeNotes") ?? true
+
+        return try database.writer.read { db in
+            let report = try ProgressRepository.report(db, in: DateInterval(start: from, end: to))
+            var payload: [String: Any] = [
+                "from": ISO.string(from),
+                "to": ISO.string(to),
+                "totalMinutes": report.totalMinutes,
+                "byProject": report.byProject().map { entry in
+                    [
+                        "project": entry.project?.name ?? "No project",
+                        "minutes": entry.minutes
+                    ] as [String: Any]
+                },
+                "byTask": report.byTask().map { entry in
+                    var line: [String: Any] = [
+                        "id": entry.todo.id,
+                        "title": entry.todo.title,
+                        "minutes": entry.minutes
+                    ]
+                    if let estimate = entry.todo.estimateMinutes {
+                        line["estimateMinutes"] = estimate
+                    }
+                    if let project = entry.project { line["project"] = project.name }
+                    return line
+                }
+            ]
+            if includeNotes {
+                payload["notes"] = report.lines
+                    .filter { !$0.entry.note.isEmpty }
+                    .map { line in
+                        [
+                            "at": ISO.string(line.entry.startedAt),
+                            "task": line.todo.title,
+                            "note": line.entry.note
+                        ] as [String: Any]
+                    }
+            }
+            return payload
+        }
+    }
+
+    private func getEstimateHistory(_ args: [String: Any]) throws -> Any {
+        guard let id = args.string("id") else { throw ToolError.missingArgument("id") }
+        return try database.writer.read { db in
+            guard let todo = try TodoRepository.fetch(db, id: id) else {
+                return ["error": "No task with id \(id)"]
+            }
+            guard let calibration = try ProgressRepository.calibration(db, for: todo) else {
+                return [
+                    "samples": 0,
+                    "note": "Not enough finished, tracked tasks like this one to say anything."
+                ] as [String: Any]
+            }
+            var payload: [String: Any] = [
+                "basis": calibration.basis.rawValue,
+                "samples": calibration.count,
+                "medianMinutes": calibration.medianMinutes
+            ]
+            if let ratio = calibration.estimateRatio {
+                payload["actualOverEstimate"] = (ratio * 100).rounded() / 100
+            }
+            return payload
+        }
+    }
+
+    private func logProgress(_ args: [String: Any]) throws -> Any {
+        guard let id = args.string("id") else { throw ToolError.missingArgument("id") }
+        guard let note = args.string("note"), !note.trimmingCharacters(in: .whitespaces).isEmpty
+        else { throw ToolError.missingArgument("note") }
+        let at = try args.date("at") ?? Date()
+
+        return try database.writer.write { db in
+            guard try TodoRepository.fetch(db, id: id) != nil else {
+                return ["error": "No task with id \(id)"]
+            }
+            let entry = try ProgressRepository.addNote(db, taskID: id, text: note, at: at)
+            return ["logged": entry != nil, "at": ISO.string(at)] as [String: Any]
+        }
+    }
+
+    private func logTime(_ args: [String: Any]) throws -> Any {
+        guard let id = args.string("id") else { throw ToolError.missingArgument("id") }
+        guard let from = try args.date("from") else { throw ToolError.missingArgument("from") }
+        guard let to = try args.date("to") else { throw ToolError.missingArgument("to") }
+        guard to > from else { throw ToolError.badArgument("to", "must be after from") }
+
+        return try database.writer.write { db in
+            guard try TodoRepository.fetch(db, id: id) != nil else {
+                return ["error": "No task with id \(id)"]
+            }
+            let entry = try ProgressRepository.addSession(
+                db,
+                taskID: id,
+                from: from,
+                to: to,
+                note: args.string("note") ?? ""
+            )
+            return ["logged": true, "minutes": entry.minutes()] as [String: Any]
         }
     }
 
@@ -575,6 +760,9 @@ final class ToolCatalog: @unchecked Sendable {
         let tags = try String.fetchAll(db, sql: """
             SELECT t.name FROM task_tag tt JOIN tag t ON t.id = tt.tagID WHERE tt.taskID = ?
             """, arguments: [todo.id])
+        // Time actually spent, beside the estimate it should be judged against.
+        let tracked = try ProgressRepository.summaries(db, taskIDs: [todo.id])[todo.id]?
+            .trackedMinutes() ?? 0
 
         var payload: [String: Any] = [
             "id": todo.id,
@@ -582,7 +770,8 @@ final class ToolCatalog: @unchecked Sendable {
             "status": todo.status.rawValue,
             "priority": todo.priority.rawValue,
             "tags": tags,
-            "scheduledMinutes": scheduled
+            "scheduledMinutes": scheduled,
+            "trackedMinutes": tracked
         ]
         if let projectID = todo.projectID { payload["projectID"] = projectID }
         if let estimate = todo.estimateMinutes { payload["estimateMinutes"] = estimate }

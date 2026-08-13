@@ -182,6 +182,25 @@ final class AppDatabase {
                 """)
         }
 
+        // M7: undo the damage from the version where starting a timer set a
+        // task to `doing`. Nothing ever set it back, and Today matches
+        // `doing` — so every task that was ever timed had moved into Today for
+        // good. Only tasks that actually have a timeline are touched: a `doing`
+        // the user set by hand on a task they never timed is theirs to keep.
+        migrator.registerMigration("v7_release_timed_doing") { db in
+            try db.execute(sql: """
+                UPDATE task SET status = 'todo'
+                WHERE status = 'doing'
+                  AND EXISTS (SELECT 1 FROM progress_entry p WHERE p.taskID = task.id)
+                """)
+        }
+
+        // M8: recorded sessions can be published to Apple Calendar too, so they
+        // need the same pairing column blocks have.
+        migrator.registerMigration("v8_progress_external_event_id") { db in
+            try db.execute(sql: "ALTER TABLE progress_entry ADD COLUMN externalEventID TEXT")
+        }
+
         return migrator
     }
 }

@@ -37,6 +37,7 @@ final class CalendarSyncService {
         self.database = database
         self.managedCalendarID = UserDefaults.standard.string(forKey: Key.calendarID)
         self.isEnabled = UserDefaults.standard.bool(forKey: Key.enabled)
+        self.publishesTrackedTime = UserDefaults.standard.bool(forKey: Key.publishesTracked)
     }
 
     /// The identifier of our calendar, if it exists. Read by the busy overlay
@@ -52,9 +53,17 @@ final class CalendarSyncService {
         didSet { UserDefaults.standard.set(isEnabled, forKey: Key.enabled) }
     }
 
+    /// Whether recorded sessions go to the calendar as well as planned blocks.
+    /// Off by default: publishing what you *did* to a calendar other people may
+    /// see is a decision only the user can make.
+    var publishesTrackedTime: Bool {
+        didSet { UserDefaults.standard.set(publishesTrackedTime, forKey: Key.publishesTracked) }
+    }
+
     private enum Key {
         static let calendarID = "managedCalendarID"
         static let enabled = "calendarWriteBackEnabled"
+        static let publishesTracked = "calendarPublishesTrackedTime"
     }
 
     // MARK: - Calendar
@@ -98,6 +107,7 @@ final class CalendarSyncService {
         managedCalendarID = nil
         try database.writer.write { db in
             try db.execute(sql: "UPDATE time_block SET externalEventID = NULL")
+            try db.execute(sql: "UPDATE progress_entry SET externalEventID = NULL")
         }
     }
 
@@ -162,7 +172,39 @@ final class CalendarSyncService {
                 }
             }
 
-            // Anything left over no longer exists in the database.
+            // Time actually spent, when the user asked for it to be published.
+            // Running sessions are skipped: an event whose end moves every
+            // minute would rewrite the calendar all day.
+            var sessionIDFixes: [(entryID: String, eventID: String?)] = []
+            if publishesTrackedTime {
+                let sessions = try database.writer.read { db in
+                    try ProgressRepository.sessions(db, in: window)
+                }.filter { !$0.entry.isRunning }
+
+                for session in sessions {
+                    guard let interval = session.interval() else { continue }
+                    let event = session.entry.externalEventID.flatMap { existing[$0] }
+
+                    if let event {
+                        existing.removeValue(forKey: session.entry.externalEventID!)
+                        if apply(session, interval: interval, to: event) {
+                            try store.save(event, span: .thisEvent, commit: false)
+                            report.updated += 1
+                        }
+                    } else {
+                        let fresh = EKEvent(eventStore: store)
+                        fresh.calendar = calendar
+                        _ = apply(session, interval: interval, to: fresh)
+                        try store.save(fresh, span: .thisEvent, commit: false)
+                        sessionIDFixes.append((session.entry.id, fresh.eventIdentifier))
+                        report.created += 1
+                    }
+                }
+            }
+
+            // Anything left over no longer exists in the database. Note that
+            // sessions are only matched above when publishing is on, so
+            // switching it off sweeps every published session away here.
             for (_, orphan) in existing {
                 try store.remove(orphan, span: .thisEvent, commit: false)
                 report.deleted += 1
@@ -170,12 +212,18 @@ final class CalendarSyncService {
 
             if !report.isEmpty { try store.commit() }
 
-            if !idFixes.isEmpty {
+            if !idFixes.isEmpty || !sessionIDFixes.isEmpty {
                 try database.writer.write { db in
                     for fix in idFixes {
                         try db.execute(
                             sql: "UPDATE time_block SET externalEventID = ? WHERE id = ?",
                             arguments: [fix.eventID, fix.blockID]
+                        )
+                    }
+                    for fix in sessionIDFixes {
+                        try db.execute(
+                            sql: "UPDATE progress_entry SET externalEventID = ? WHERE id = ?",
+                            arguments: [fix.eventID, fix.entryID]
                         )
                     }
                 }
@@ -206,6 +254,23 @@ final class CalendarSyncService {
             event.endDate = scheduled.block.endAt
             changed = true
         }
+        if event.notes != notes { event.notes = notes; changed = true }
+        return changed
+    }
+
+    /// A recorded session as an event. Titled so a glance at the week in
+    /// Calendar.app distinguishes what was planned from what happened.
+    private func apply(_ session: TrackedSession, interval: DateInterval, to event: EKEvent) -> Bool {
+        let title = "✓ \(session.todo.title)"
+        var lines: [String] = ["Time tracked in Cadence."]
+        if let project = session.project { lines.append("Project: \(project.name)") }
+        if !session.entry.note.isEmpty { lines.append(session.entry.note) }
+        let notes = lines.joined(separator: "\n")
+
+        var changed = false
+        if event.title != title { event.title = title; changed = true }
+        if event.startDate != interval.start { event.startDate = interval.start; changed = true }
+        if event.endDate != interval.end { event.endDate = interval.end; changed = true }
         if event.notes != notes { event.notes = notes; changed = true }
         return changed
     }

@@ -175,6 +175,24 @@ extension ButtonStyle where Self == QuietButtonStyle {
     static var quietProminent: QuietButtonStyle { QuietButtonStyle(prominent: true) }
 }
 
+/// The icon affordances beside a field: no bezel, but a hit target and a hover
+/// that says the pointer found them.
+struct QuietIconButtonStyle: ButtonStyle {
+    @State private var isHovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(3)
+            .background {
+                RoundedRectangle(cornerRadius: Metrics.tight, style: .continuous)
+                    .fill(Color.primary.opacity(configuration.isPressed ? 0.12
+                                                : (isHovering ? 0.06 : 0)))
+            }
+            .contentShape(Rectangle())
+            .onHover { isHovering = $0 }
+    }
+}
+
 /// A popup button with no bezel: the value, a chevron, and a menu.
 struct QuietMenuPicker<Value: Hashable>: View {
     var options: [(value: Value, title: String)]
@@ -281,9 +299,10 @@ extension View {
     }
 
     /// A borderless icon button — the small clear/toggle affordances that sit
-    /// beside a field and should never look like buttons in their own right.
+    /// beside a field and should never look like buttons in their own right,
+    /// but should still answer the pointer.
     func quietIconButton() -> some View {
-        buttonStyle(.plain)
+        buttonStyle(QuietIconButtonStyle())
     }
 }
 

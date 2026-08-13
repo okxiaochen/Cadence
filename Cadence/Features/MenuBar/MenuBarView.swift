@@ -187,6 +187,10 @@ struct MenuBarView: View {
                     NSApp.activate(ignoringOtherApps: true)
                     openWindow(id: "main")
                 }
+                Button("Report") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "report")
+                }
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
             }

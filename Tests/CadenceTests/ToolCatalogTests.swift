@@ -129,6 +129,117 @@ final class ToolCatalogTests: XCTestCase {
         XCTAssertEqual(payload?["scheduledMinutes"] as? Int, 60)
     }
 
+    // MARK: - Progress
+
+    func testGetTaskCarriesTheTimelineAndTimeSpent() throws {
+        let todo = try insert("Ship v2", estimate: 60)
+        try database.writer.write { db in
+            try ProgressRepository.addSession(db, taskID: todo.id, from: date(5, 9), to: date(5, 11))
+            try ProgressRepository.addNote(db, taskID: todo.id, text: "Blocked on the API", at: date(5, 12))
+        }
+
+        let payload = try call("get_task", ["id": todo.id]) as? [String: Any]
+        XCTAssertEqual(payload?["trackedMinutes"] as? Int, 120)
+        XCTAssertEqual(payload?["estimateMinutes"] as? Int, 60)
+
+        let progress = dictionaries(payload?["progress"] as Any)
+        XCTAssertEqual(progress.count, 2)
+        XCTAssertEqual(progress.first?["kind"] as? String, "note", "newest first")
+        XCTAssertEqual(progress.first?["note"] as? String, "Blocked on the API")
+        XCTAssertEqual(progress.last?["minutes"] as? Int, 120)
+    }
+
+    func testTimeReportTotalsTheRangeAndListsTheNotes() throws {
+        let first = try insert("Ship v2")
+        let second = try insert("Fix the flaky test")
+        try database.writer.write { db in
+            try ProgressRepository.addSession(db, taskID: first.id, from: date(5, 9), to: date(5, 10))
+            try ProgressRepository.addSession(db, taskID: second.id, from: date(5, 11), to: date(5, 11, 30))
+            try ProgressRepository.addNote(db, taskID: second.id, text: "DST boundary", at: date(5, 12))
+            try ProgressRepository.addSession(db, taskID: first.id, from: date(9, 9), to: date(9, 17))
+        }
+
+        let payload = try call("get_time_report", [
+            "from": ISO.string(date(5, 0)),
+            "to": ISO.string(date(6, 0))
+        ]) as? [String: Any]
+
+        XCTAssertEqual(payload?["totalMinutes"] as? Int, 90, "the later day is out of range")
+        XCTAssertEqual(dictionaries(payload?["byTask"] as Any).count, 2)
+        XCTAssertEqual(dictionaries(payload?["notes"] as Any).first?["note"] as? String, "DST boundary")
+    }
+
+    func testEstimateHistoryReportsTheMedianAndTheRatio() throws {
+        let tag = try database.writer.write { db in
+            try CatalogRepository.findOrCreateTag(db, named: "writing")
+        }
+
+        for (index, minutes) in [120, 90].enumerated() {
+            var done = Todo(title: "Old notes \(index)", status: .done, estimateMinutes: 60)
+            done.completedAt = date(4, 18)
+            try database.writer.write { db in
+                let inserted = try TodoRepository.insert(db, done, tagIDs: [tag.id])
+                try ProgressRepository.addSession(
+                    db,
+                    taskID: inserted.id,
+                    from: date(4, 9),
+                    to: date(4, 9).addingTimeInterval(TimeInterval(minutes * 60))
+                )
+            }
+        }
+
+        let subject = Todo(title: "New notes")
+        try database.writer.write { db in try TodoRepository.insert(db, subject, tagIDs: [tag.id]) }
+
+        let payload = try call("get_estimate_history", ["id": subject.id]) as? [String: Any]
+        XCTAssertEqual(payload?["samples"] as? Int, 2)
+        XCTAssertEqual(payload?["medianMinutes"] as? Int, 105)
+        XCTAssertEqual(payload?["actualOverEstimate"] as? Double ?? 0, 1.75, accuracy: 0.01)
+    }
+
+    func testLogProgressWritesStraightAwayRatherThanStaging() throws {
+        let todo = try insert("Ship v2")
+        let payload = try call("log_progress", [
+            "id": todo.id,
+            "note": "Wrote the upgrade guide"
+        ]) as? [String: Any]
+
+        XCTAssertEqual(payload?["logged"] as? Bool, true)
+        XCTAssertEqual(buffer.count, 0, "a journal entry is not an edit to review")
+
+        let entries = try database.writer.read { db in
+            try ProgressRepository.entries(db, taskID: todo.id)
+        }
+        XCTAssertEqual(entries.first?.note, "Wrote the upgrade guide")
+        XCTAssertEqual(entries.first?.kind, .note)
+    }
+
+    func testLogTimeRecordsASessionThatWasNeverTimed() throws {
+        let todo = try insert("Ship v2")
+        let payload = try call("log_time", [
+            "id": todo.id,
+            "from": ISO.string(date(5, 14)),
+            "to": ISO.string(date(5, 16)),
+            "note": "Pairing"
+        ]) as? [String: Any]
+
+        XCTAssertEqual(payload?["minutes"] as? Int, 120)
+        let entries = try database.writer.read { db in
+            try ProgressRepository.entries(db, taskID: todo.id)
+        }
+        XCTAssertEqual(entries.first?.kind, .session)
+        XCTAssertEqual(entries.first?.minutes(), 120)
+    }
+
+    func testLogTimeRejectsABackwardsRange() throws {
+        let todo = try insert("Ship v2")
+        XCTAssertThrowsError(try call("log_time", [
+            "id": todo.id,
+            "from": ISO.string(date(5, 16)),
+            "to": ISO.string(date(5, 14))
+        ]))
+    }
+
     func testGetTaskOnAMissingIDReportsRatherThanThrows() throws {
         let payload = try call("get_task", ["id": "nope"]) as? [String: Any]
         XCTAssertNotNil(payload?["error"])

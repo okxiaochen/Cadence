@@ -154,6 +154,9 @@ struct ProgressEntry: Identifiable, Codable, Hashable, FetchableRecord, Persista
     /// `nil` on a note, and on the session currently running.
     var endedAt: Date?
     var createdAt: Date = Date()
+    /// The `EKEvent` published for this session, when publishing tracked time
+    /// is on. Notes and running sessions never have one.
+    var externalEventID: String?
 
     var isRunning: Bool { kind == .session && endedAt == nil }
 

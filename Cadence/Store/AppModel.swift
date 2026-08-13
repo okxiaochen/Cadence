@@ -137,6 +137,11 @@ final class AppModel {
     var agendaCancellable: AnyDatabaseCancellable?
     var runningCancellable: AnyDatabaseCancellable?
     var inspectedProgressCancellable: AnyDatabaseCancellable?
+    /// When the Mac last went to sleep, so a timer left running through it can
+    /// be cut back to the last moment anyone was actually at the keyboard.
+    var wentToSleepAt: Date?
+    var sleepObserver: (any NSObjectProtocol)?
+    var wakeObserver: (any NSObjectProtocol)?
     private var publishTask: Task<Void, Never>?
     private var clockTask: Task<Void, Never>?
     /// The day the agenda window was built for, so it can be rebuilt at midnight.
@@ -158,6 +163,7 @@ final class AppModel {
         restartCalendarObservation()
         restartAgendaObservation()
         restartRunningObservation()
+        startAbandonedTimerWatch()
         startClock()
     }
 
@@ -168,6 +174,7 @@ final class AppModel {
                 guard let self, !Task.isCancelled else { return }
                 self.clock = Date()
                 self.refreshAgendaIfDayChanged()
+                self.truncateAbandonedTimers()
             }
         }
     }

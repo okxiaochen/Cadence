@@ -136,7 +136,9 @@ final class UpgradeTests: XCTestCase {
                 "v3_retire_inbox",
                 "v4_external_event_id",
                 "v5_memory",
-                "v6_progress"
+                "v6_progress",
+                "v7_release_timed_doing",
+                "v8_progress_external_event_id"
             ],
             "A shipped migration was renamed or removed. Add a new one instead — "
                 + "users who already ran the old one will never re-run it."

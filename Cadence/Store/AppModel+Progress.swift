@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GRDB
 
@@ -26,6 +27,47 @@ extension AppModel {
                 MainActor.assumeIsolated { self?.runningEntries = entries }
             }
         )
+    }
+
+    /// Watches for the two ways a timer records time nobody worked: the Mac
+    /// sleeping with one running, and the plain forgotten one.
+    ///
+    /// The sleep notification arrives *before* the machine sleeps, so the time
+    /// it carries is the last moment anyone was at the keyboard — which is
+    /// exactly where the session should stop. It is recorded rather than acted
+    /// on immediately, because the work happens on waking.
+    func startAbandonedTimerWatch() {
+        let center = NSWorkspace.shared.notificationCenter
+        sleepObserver = center.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.wentToSleepAt = Date() }
+        }
+        wakeObserver = center.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.truncateAbandonedTimers() }
+        }
+        truncateAbandonedTimers()
+    }
+
+    /// Also called from the minute tick, so a timer left running while the Mac
+    /// stays awake is still capped.
+    func truncateAbandonedTimers() {
+        guard !runningEntries.isEmpty else { return }
+        let asleepSince = wentToSleepAt
+        var affected: [String] = []
+        do {
+            try database.writer.write { db in
+                affected = try ProgressRepository.truncateAbandoned(db, asleepSince: asleepSince)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        wentToSleepAt = nil
+        // Not undoable on purpose: this is a correction to time that was never
+        // worked, and the entry it writes is editable like any other.
+        if !affected.isEmpty { scheduleCalendarPublish() }
     }
 
     /// Follows `inspectedID`: the open panel's timeline, kept live.
@@ -114,6 +156,31 @@ extension AppModel {
         if isTiming(taskID) { stopTimer(for: taskID) } else { startTimer(for: taskID) }
     }
 
+    /// What ⌥⇧Space does, with no task in hand.
+    ///
+    /// Stopping is unambiguous, so anything running stops. Starting has to
+    /// guess, and it guesses in the order the answer is most likely to be
+    /// right: what you have selected, then what the agenda says you are in the
+    /// middle of, then what is next today. If none of those exist there is
+    /// nothing sensible to start, and it does nothing rather than picking a
+    /// task at random.
+    func toggleTimerForFocusedTask() {
+        if isTimingAnything {
+            stopAllTimers()
+            return
+        }
+        if let selected = selection.first {
+            startTimer(for: selected)
+            return
+        }
+        switch agendaFocus() {
+        case .underway(let item), .next(let item):
+            startTimer(for: item.todo.id)
+        case .overdue, .allDone, .empty:
+            break
+        }
+    }
+
     // MARK: - Timeline
 
     func logProgress(_ text: String, at date: Date = Date(), for taskID: String) {
@@ -132,17 +199,20 @@ extension AppModel {
         }
     }
 
-    /// The same, counted back from now — what "I've been at this 40 minutes"
-    /// means without opening a date picker.
-    func logSession(minutes: Int, for taskID: String, note: String = "") {
-        guard minutes > 0 else { return }
-        let end = Date()
-        logSession(
-            from: end.addingTimeInterval(TimeInterval(-minutes * 60)),
-            to: end,
-            note: note,
-            for: taskID
-        )
+    /// How long finished tasks like this one actually took. Read on demand
+    /// rather than observed: it only changes when a task is completed, and the
+    /// inspector is the only thing that asks.
+    func calibration(for todo: Todo) -> EstimateCalibration? {
+        try? database.writer.read { db in
+            try ProgressRepository.calibration(db, for: todo)
+        }
+    }
+
+    /// Everything recorded in a range, for the report.
+    func timeReport(in range: DateInterval) -> TimeReport {
+        (try? database.writer.read { db in
+            try ProgressRepository.report(db, in: range)
+        }) ?? TimeReport(range: range, lines: [])
     }
 
     func updateProgress(_ entry: ProgressEntry) {

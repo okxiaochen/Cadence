@@ -149,6 +149,22 @@ private struct CalendarSettings: View {
                     .foregroundStyle(.secondary)
 
                 if model.calendarSync.isEnabled {
+                    Toggle("Also publish time I tracked", isOn: Binding(
+                        get: { model.calendarSync.publishesTrackedTime },
+                        set: { publishes in
+                            model.calendarSync.publishesTrackedTime = publishes
+                            // Turning it off sweeps the published sessions away
+                            // on the same pass that stops matching them.
+                            model.publishToCalendar()
+                        }
+                    ))
+
+                    Text("Recorded sessions appear as “✓ Task name”, so the week in "
+                         + "Calendar.app shows what happened beside what was planned. "
+                         + "A running timer is not published until you stop it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     HStack {
                         Button("Sync Now") { model.publishToCalendar() }
                             .controlSize(.small)

@@ -134,11 +134,40 @@ struct TaskDetailView: View {
                 }
             }
 
+            // What work like this has actually taken. An estimate is a guess;
+            // this is the only thing in the database that can contradict one,
+            // and it is worth a line exactly where the guess gets typed.
+            if let calibration {
+                HStack(spacing: Metrics.tight) {
+                    Image(systemName: "chart.bar.xaxis").font(.system(size: 9))
+                    Text(calibrationLine(calibration))
+                }
+                .font(.caption)
+                .foregroundStyle(.secondaryText)
+                .help("From \(calibration.count) finished tasks with \(calibration.basis.title)")
+            }
+
             OptionalDateRow(title: "Defer Until", date: $draft.deferAt, onCommit: commit)
 
             tagsRow
             budgetLine
         }
+    }
+
+    /// Recomputed when the task's tags or project change, since those are what
+    /// decide which finished tasks count as "like this one".
+    private var calibration: EstimateCalibration? {
+        model.calibration(for: detail.todo)
+    }
+
+    private func calibrationLine(_ calibration: EstimateCalibration) -> String {
+        let median = "Similar tasks took \(Format.duration(calibration.medianMinutes)) (median of \(calibration.count))"
+        guard let ratio = calibration.estimateRatio, ratio >= 1.25 || ratio <= 0.8 else {
+            return median
+        }
+        // Only worth saying when the gap is big enough to change a decision.
+        let over = ratio > 1
+        return median + " — \(over ? "about \(String(format: "%.1f", ratio))× their estimate" : "under their estimate")"
     }
 
     private var tagsRow: some View {

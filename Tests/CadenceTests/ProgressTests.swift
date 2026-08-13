@@ -115,14 +115,98 @@ final class ProgressTests: XCTestCase {
         }
     }
 
-    func testStartingATimerMarksTheTaskAsDoing() throws {
+    func testTimingATaskLeavesItsStatusAlone() throws {
         let todo = try insert("Write the release notes")
         try database.writer.write { db in
             try ProgressRepository.startSession(db, taskID: todo.id, at: at(9))
         }
+        // It used to promote `todo` to `doing`, which nothing ever reversed —
+        // and Today matches `doing`, so every task ever timed moved into Today
+        // for good.
         try database.writer.read { db in
-            XCTAssertEqual(try TodoRepository.fetch(db, id: todo.id)?.status, .doing)
+            XCTAssertEqual(try TodoRepository.fetch(db, id: todo.id)?.status, .todo)
         }
+    }
+
+    func testCompletingATaskStopsItsTimer() throws {
+        let todo = try insert("Write the release notes")
+        try database.writer.write { db in
+            try ProgressRepository.startSession(db, taskID: todo.id, at: at(9))
+            try TodoRepository.setStatus(db, id: todo.id, status: .done, now: at(10))
+        }
+
+        try database.writer.read { db in
+            XCTAssertTrue(
+                try ProgressRepository.running(db).isEmpty,
+                "a finished task must not go on accruing time"
+            )
+            XCTAssertEqual(try ProgressRepository.entries(db, taskID: todo.id).first?.minutes(), 60)
+        }
+    }
+
+    // MARK: - Timers left running
+
+    func testASessionRunningThroughSleepIsCutBackToWhenTheMacSlept() throws {
+        let todo = try insert("Write the release notes")
+        try database.writer.write { db in
+            try ProgressRepository.startSession(db, taskID: todo.id, at: at(16))
+            // Slept at 18:00, woke the next morning.
+            try ProgressRepository.truncateAbandoned(
+                db,
+                now: at(9, day: 13),
+                asleepSince: at(18)
+            )
+        }
+
+        let entry = try XCTUnwrap(
+            try database.writer.read { db in try ProgressRepository.entries(db, taskID: todo.id).first }
+        )
+        XCTAssertEqual(entry.endedAt, at(18))
+        XCTAssertEqual(entry.minutes(), 120)
+        XCTAssertTrue(entry.note.contains("sleep"), "the entry says why it stops there")
+    }
+
+    func testAForgottenTimerIsCappedRatherThanRunningAllNight() throws {
+        let todo = try insert("Write the release notes")
+        try database.writer.write { db in
+            try ProgressRepository.startSession(db, taskID: todo.id, at: at(9))
+            try ProgressRepository.truncateAbandoned(db, now: at(23))
+        }
+
+        let entry = try XCTUnwrap(
+            try database.writer.read { db in try ProgressRepository.entries(db, taskID: todo.id).first }
+        )
+        XCTAssertEqual(entry.minutes(), 480, "capped at 8h")
+        XCTAssertTrue(entry.note.contains("8h"))
+    }
+
+    func testASessionThatStartedAfterTheMacWokeIsLeftAlone() throws {
+        let todo = try insert("Write the release notes")
+        try database.writer.write { db in
+            try ProgressRepository.startSession(db, taskID: todo.id, at: at(9, day: 13))
+            try ProgressRepository.truncateAbandoned(
+                db,
+                now: at(10, day: 13),
+                asleepSince: at(18)     // last night, before this session began
+            )
+        }
+        let running = try database.writer.read { db in try ProgressRepository.running(db) }
+        XCTAssertEqual(running.count, 1, "still going — it started after the nap")
+    }
+
+    func testTruncationKeepsWhateverTheSessionAlreadySaid() throws {
+        let todo = try insert("Write the release notes")
+        try database.writer.write { db in
+            var entry = try ProgressRepository.startSession(db, taskID: todo.id, at: at(9))
+            entry.note = "Pairing with Mira"
+            try ProgressRepository.update(db, entry)
+            try ProgressRepository.truncateAbandoned(db, now: at(23))
+        }
+        let entry = try XCTUnwrap(
+            try database.writer.read { db in try ProgressRepository.entries(db, taskID: todo.id).first }
+        )
+        XCTAssertTrue(entry.note.hasPrefix("Pairing with Mira"))
+        XCTAssertTrue(entry.note.contains("Stopped automatically"))
     }
 
     func testAnAccidentalStartLeavesNoTrace() throws {
@@ -391,6 +475,95 @@ final class ProgressTests: XCTestCase {
         }
         XCTAssertEqual(restored.count, 2)
         XCTAssertEqual(restored.map(\.kind), [.note, .session], "newest first")
+    }
+
+    // MARK: - Reporting and calibration
+
+    func testTheReportTotalsByProjectAndTaskAndKeepsTheNotes() throws {
+        let project = Project(name: "Cadence")
+        try database.writer.write { db in try CatalogRepository.insert(db, project) }
+
+        var writing = Todo(title: "Write the release notes", projectID: project.id)
+        var fixing = Todo(title: "Fix the flaky test")
+        try database.writer.write { db in
+            writing = try TodoRepository.insert(db, writing)
+            fixing = try TodoRepository.insert(db, fixing)
+            try ProgressRepository.addSession(db, taskID: writing.id, from: at(9), to: at(10, 30))
+            try ProgressRepository.addSession(db, taskID: writing.id, from: at(14), to: at(15))
+            try ProgressRepository.addSession(db, taskID: fixing.id, from: at(11), to: at(11, 30))
+            try ProgressRepository.addNote(db, taskID: fixing.id, text: "Suspect a DST boundary", at: at(12))
+            // Outside the range.
+            try ProgressRepository.addSession(db, taskID: fixing.id, from: at(9, day: 3), to: at(17, day: 3))
+        }
+
+        let report = try database.writer.read { db in
+            try ProgressRepository.report(db, in: DateInterval(start: at(0), end: at(0, day: 13)))
+        }
+
+        XCTAssertEqual(report.totalMinutes, 180, "the session on another day stays out")
+        XCTAssertEqual(report.byProject().first?.project?.name, "Cadence")
+        XCTAssertEqual(report.byProject().first?.minutes, 150)
+        XCTAssertEqual(report.byTask().first?.todo.id, writing.id, "biggest first")
+        XCTAssertEqual(report.notes.count, 1)
+        XCTAssertEqual(report.notes.first?.entry.note, "Suspect a DST boundary")
+        XCTAssertEqual(report.days.count, 1)
+    }
+
+    func testCalibrationUsesFinishedTrackedTasksSharingATag() throws {
+        let tag = try database.writer.write { db in
+            try CatalogRepository.findOrCreateTag(db, named: "writing")
+        }
+
+        func trackedTask(_ title: String, minutes: Int, estimate: Int?, done: Bool) throws -> Todo {
+            var todo = Todo(title: title, status: done ? .done : .todo)
+            todo.estimateMinutes = estimate
+            todo.completedAt = done ? at(18) : nil
+            return try database.writer.write { db in
+                let inserted = try TodoRepository.insert(db, todo, tagIDs: [tag.id])
+                try ProgressRepository.addSession(
+                    db,
+                    taskID: inserted.id,
+                    from: at(9),
+                    to: at(9).addingTimeInterval(TimeInterval(minutes * 60))
+                )
+                return inserted
+            }
+        }
+
+        _ = try trackedTask("Old notes", minutes: 120, estimate: 60, done: true)
+        _ = try trackedTask("Older notes", minutes: 90, estimate: 45, done: true)
+        _ = try trackedTask("Still going", minutes: 600, estimate: 30, done: false)
+
+        var subject = Todo(title: "New release notes")
+        subject = try database.writer.write { db in
+            try TodoRepository.insert(db, subject, tagIDs: [tag.id])
+        }
+
+        let calibration = try XCTUnwrap(
+            try database.writer.read { db in try ProgressRepository.calibration(db, for: subject) }
+        )
+        XCTAssertEqual(calibration.basis, .tags)
+        XCTAssertEqual(calibration.count, 2, "the unfinished one says nothing about how long the whole takes")
+        XCTAssertEqual(calibration.medianMinutes, 105)
+        XCTAssertEqual(try XCTUnwrap(calibration.estimateRatio), 2.0, accuracy: 0.01)
+    }
+
+    func testCalibrationStaysQuietWithoutEnoughHistory() throws {
+        let todo = try insert("Write the release notes")
+        let calibration = try database.writer.read { db in
+            try ProgressRepository.calibration(db, for: todo)
+        }
+        XCTAssertNil(calibration, "two samples is the floor; one is an anecdote")
+    }
+
+    func testReportRangesAreWholeDaysAndDoNotOverlap() {
+        let now = at(9, day: 12)   // a Wednesday
+        let thisWeek = ReportRange.thisWeek.interval(now: now, calendar: calendar)
+        let lastWeek = ReportRange.lastWeek.interval(now: now, calendar: calendar)
+
+        XCTAssertEqual(lastWeek.end, thisWeek.start, "no gap and no double counting")
+        XCTAssertEqual(thisWeek.start, at(0, day: 10), "weeks start on Monday, as the grid does")
+        XCTAssertEqual(thisWeek.end, at(0, day: 13), "up to the end of today")
     }
 
     // MARK: - Notes preview

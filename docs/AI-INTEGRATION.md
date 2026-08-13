@@ -159,8 +159,10 @@ mutate a proposal buffer, not the database.
 
 | Tool | Args | Returns |
 |---|---|---|
-| `list_tasks` | `status?, projectID?, tagIDs?, dueBefore?, unscheduledOnly?, limit` | tasks with estimates, scheduled minutes, due/defer |
-| `get_task` | `id` | full task + notes + subtasks + blocks |
+| `list_tasks` | `status?, projectID?, tagIDs?, dueBefore?, unscheduledOnly?, limit` | tasks with estimates, scheduled **and tracked** minutes, due/defer |
+| `get_task` | `id` | full task + notes + subtasks + blocks + its progress timeline |
+| `get_time_report` | `from, to, includeNotes?` | time recorded in a range, totalled by project and task, plus the progress notes |
+| `get_estimate_history` | `id` | what finished tasks with the same tags (or project) actually took: median, sample count, actual÷estimate |
 | `list_projects` | — | projects with task counts |
 | `list_tags` | — | tags with usage counts |
 | `get_schedule` | `from, to` | task blocks **and** Apple Calendar busy events |
@@ -178,6 +180,27 @@ mutate a proposal buffer, not the database.
 | `propose_move_block` | `blockID, startAt, endAt` |
 | `propose_delete_block` | `blockID` |
 | `explain` | `summary, warnings[]` — the model's rationale and anything it couldn't do |
+
+### Write (immediate, not staged)
+
+| Tool | Args |
+|---|---|
+| `log_progress` | `id, note, at?` — a line on the task's timeline |
+| `log_time` | `id, from, to, note?` — a session the user did not time |
+| `remember` / `forget` | see §6 |
+
+These land straight in the database, like memory writes and unlike every task
+edit. A timeline entry is a **journal**, not a change to the task: it adds a
+line saying what happened rather than altering what the task *is*, nothing
+downstream depends on it being right, and it is trivially deleted. Sending it
+through the review buffer would put a modal in front of the one thing the user
+just said out loud.
+
+**Tracked time is the only evidence that can contradict an estimate.** Without
+`trackedMinutes` and `get_estimate_history`, the model plans from the user's
+optimism and has no way to notice that this kind of task always takes twice as
+long as it is given. Prompts for estimating should call
+`get_estimate_history` first.
 
 **`find_free_slots` is the linchpin.** It merges Apple Calendar busy time,
 existing blocks, working hours, and a configurable minimum gap, then returns

@@ -170,6 +170,16 @@ point of keeping a record. `SessionBlockView` is styled unlike `BlockView` —
 dashed edge, lighter fill — and has a **minimum height**, since a ten-minute
 session is four points tall at the default zoom.
 
+Two rules the timer learned the hard way:
+
+- **Timing a task must not touch its status.** Promoting `todo` to `doing` on
+  start read well until you noticed nothing ever put it back — and Today matches
+  `status = 'doing'`, so every task ever timed moved into Today permanently
+  (`v7_release_timed_doing` cleans that up).
+- **A clock nobody is watching gets closed.** `truncateAbandoned` cuts a session
+  back to when the Mac went to sleep, or caps it at 8h, and says so in the
+  entry's own note. Without it an overnight timer records a working day.
+
 ## What cannot be verified from here
 
 Screen recording is unavailable, so **drag-and-drop and general appearance have

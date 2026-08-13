@@ -108,16 +108,6 @@ extension AppModel {
         }
     }
 
-    /// Recorded sessions that started on `day`. A session running past midnight
-    /// stays in the column it began in rather than being split in two — it is
-    /// one stretch of work, and cutting it would double the entries you see.
-    func sessions(on day: Date) -> [TrackedSession] {
-        let calendar = Calendar.current
-        return trackedSessions.filter {
-            calendar.isDate($0.entry.startedAt, inSameDayAs: day)
-        }
-    }
-
     func busyEvents(on day: Date) -> [BusyEvent] {
         let calendar = Calendar.current
         return eventKit.events.filter {
