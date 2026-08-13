@@ -6,6 +6,7 @@ struct AIPanelView: View {
 
     @State private var input = ""
     @State private var showsDetails = false
+    @State private var showsHistory = false
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -49,6 +50,26 @@ struct AIPanelView: View {
                 Button("Stop") { session.cancel() }
                     .controlSize(.small)
             }
+            Button {
+                session.startNewConversation()
+                isInputFocused = true
+            } label: {
+                Image(systemName: "square.and.pencil")
+            }
+            .quietIconButton()
+            .disabled(session.isEmptyConversation || session.status.isRunning)
+            .help("New conversation")
+
+            Button { showsHistory.toggle() } label: {
+                Image(systemName: "clock.arrow.circlepath")
+            }
+            .quietIconButton()
+            .help("Past conversations")
+            .popover(isPresented: $showsHistory, arrowEdge: .bottom) {
+                ConversationHistoryView(isPresented: $showsHistory)
+                    .environment(session)
+            }
+
             Menu {
                 Button("Show Run Details") { showsDetails = true }
                     .disabled(session.commandLine.isEmpty)
@@ -56,6 +77,7 @@ struct AIPanelView: View {
                 Image(systemName: "ellipsis.circle")
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .fixedSize()
         }
         .padding(.horizontal, 12)

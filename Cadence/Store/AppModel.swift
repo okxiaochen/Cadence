@@ -105,6 +105,12 @@ final class AppModel {
     var agendaItems: [AgendaItem] = []
     var selectedBlockID: String?
 
+    /// A proposal from something outside the app — an agent connected over the
+    /// MCP endpoint. Held here rather than on `AgentSession` because it belongs
+    /// to no chat: it arrives unprompted, so it has to be visible wherever you
+    /// happen to be.
+    var externalProposal: Proposal?
+
     /// Sessions running right now, newest first — several are allowed, since
     /// real work interleaves. Held here rather than in the list rows so the
     /// menu bar and the calendar see them whatever list is on screen.
@@ -367,7 +373,9 @@ final class AppModel {
             if let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date()) {
                 moveToDay(tomorrow, for: ids)
             }
-        case .smart(.anytime):
+        case .smart(.anytime), .smart(.stalled):
+            // Stalled is an observation, not a place: dropping onto it can only
+            // mean "take the date off", the same as Anytime.
             setDueDate(nil, for: ids)
         case .smart(.logbook):
             setStatus(.done, for: ids)
@@ -580,7 +588,7 @@ final class AppModel {
             return calendar.startOfDay(for: Date())
         case .smart(.upcoming):
             return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))
-        case .smart(.anytime), .smart(.logbook), .project, .tag:
+        case .smart(.anytime), .smart(.stalled), .smart(.logbook), .project, .tag:
             return nil
         }
     }

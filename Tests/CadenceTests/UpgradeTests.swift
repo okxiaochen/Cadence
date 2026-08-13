@@ -121,6 +121,53 @@ final class UpgradeTests: XCTestCase {
         }
     }
 
+    // MARK: - Damage from outside the app
+
+    /// `sqlite3` on the command line has foreign keys **off** by default, so a
+    /// task deleted there leaves its tags and blocks behind. With foreign keys
+    /// on — as the app runs — the next migration refuses to proceed, the app
+    /// falls back to an in-memory database, and every list looks empty.
+    func testALaunchSurvivesOrphansLeftByAnOutsideDelete() throws {
+        let path = NSTemporaryDirectory() + "orphan-\(UUID().uuidString).sqlite"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        var config = Configuration()
+        config.foreignKeysEnabled = true
+        let database = try AppDatabase(DatabaseQueue(path: path, configuration: config))
+
+        let todo = Todo(title: "Deleted from a shell")
+        try database.writer.write { db in
+            let inserted = try TodoRepository.insert(db, todo)
+            let tag = try CatalogRepository.findOrCreateTag(db, named: "ops")
+            try TodoRepository.setTags(db, taskID: inserted.id, tagIDs: [tag.id])
+        }
+
+        // What `sqlite3 … "DELETE FROM task …"` does: no cascade.
+        var loose = Configuration()
+        loose.foreignKeysEnabled = false
+        let outside = try DatabaseQueue(path: path, configuration: loose)
+        try outside.write { db in
+            try db.execute(sql: "DELETE FROM task WHERE id = ?", arguments: [todo.id])
+        }
+        try outside.read { db in
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM task_tag"), 1,
+                           "the orphan is there — otherwise this test proves nothing")
+        }
+
+        // Relaunch.
+        let reopened = try AppDatabase(DatabaseQueue(path: path, configuration: config))
+        XCTAssertEqual(reopened.repairedOrphanRows, 1)
+        try reopened.writer.read { db in
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM task_tag"), 0)
+            XCTAssertTrue(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
+        }
+    }
+
+    func testANormalLaunchRepairsNothing() throws {
+        let database = try AppDatabase.inMemory()
+        XCTAssertEqual(database.repairedOrphanRows, 0)
+    }
+
     // MARK: - The rule that keeps all of the above true
 
     /// Editing a shipped migration is the one thing that silently breaks
@@ -138,7 +185,8 @@ final class UpgradeTests: XCTestCase {
                 "v5_memory",
                 "v6_progress",
                 "v7_release_timed_doing",
-                "v8_progress_external_event_id"
+                "v8_progress_external_event_id",
+                "v9_ai_conversation"
             ],
             "A shipped migration was renamed or removed. Add a new one instead — "
                 + "users who already ran the old one will never re-run it."

@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Sidebar selection
 
 enum SmartList: String, CaseIterable, Identifiable, Hashable {
-    case today, upcoming, anytime, logbook
+    case today, upcoming, anytime, stalled, logbook
 
     var id: String { rawValue }
 
@@ -12,6 +12,7 @@ enum SmartList: String, CaseIterable, Identifiable, Hashable {
         case .today: "Today"
         case .upcoming: "Upcoming"
         case .anytime: "Anytime"
+        case .stalled: "Stalled"
         case .logbook: "Logbook"
         }
     }
@@ -21,9 +22,20 @@ enum SmartList: String, CaseIterable, Identifiable, Hashable {
         case .today: "star"
         case .upcoming: "calendar"
         case .anytime: "tray.full"
+        case .stalled: "hourglass"
         case .logbook: "checkmark.circle"
         }
     }
+}
+
+/// How long a task can sit with nothing happening before it counts as stalled.
+///
+/// Undated work does not fall out of any other list — Anytime holds everything
+/// open, so the one thing you have been quietly avoiding looks exactly like the
+/// forty things you simply have not got to yet. This is the list that asks the
+/// question nobody volunteers to answer.
+enum StalledList {
+    static let quietDays = 14
 }
 
 enum SidebarSelection: Hashable {

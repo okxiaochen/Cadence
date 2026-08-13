@@ -32,19 +32,26 @@ final class MCPServer: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    func start(catalog: ToolCatalog) throws {
+    /// `port` and `token` are fixed for the long-lived endpoint other agents
+    /// connect to: a client configured once cannot chase a port that changes on
+    /// every launch. A run of our own CLI leaves both nil and gets an ephemeral
+    /// port and a token that dies with the run.
+    func start(catalog: ToolCatalog, port fixedPort: UInt16? = nil, token fixedToken: String? = nil) throws {
         stop()
 
         lock.lock()
         self.catalog = catalog
-        self.token = Self.makeToken()
+        self.token = fixedToken ?? Self.makeToken()
         lock.unlock()
 
         let parameters = NWParameters.tcp
         parameters.requiredInterfaceType = .loopback
         parameters.allowLocalEndpointReuse = true
 
-        let listener = try NWListener(using: parameters, on: .any)
+        let listener = try NWListener(
+            using: parameters,
+            on: fixedPort.flatMap { NWEndpoint.Port(rawValue: $0) } ?? .any
+        )
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection)
         }

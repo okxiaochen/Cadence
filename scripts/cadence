@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Cadence from the shell.
+#
+#   cadence add "Fix the flaky test #backend ~1h tomorrow"
+#   cadence start [task-id]      # no id: whatever ⌥⇧Space would start
+#   cadence stop
+#   cadence show <task-id>
+#   cadence report
+#   cadence tasks [limit]        # reads over MCP, needs the endpoint switched on
+#   cadence call <tool> '<json>' # any tool in the catalog
+#
+# Writes go through the `cadence://` URL scheme, which is fire-and-forget and
+# always available. Reads go over the MCP endpoint (Settings › AI › Other
+# tools), because a URL cannot answer a question.
+set -euo pipefail
+
+CONFIG="$HOME/.config/cadence/mcp.json"
+
+usage() {
+  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
+
+open_url() {
+  # -g: file a task without stealing focus from whatever you were doing.
+  open -g "$1"
+}
+
+urlencode() {
+  python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+}
+
+endpoint() {
+  [[ -f "$CONFIG" ]] || { echo "MCP endpoint is off — enable it in Settings › AI." >&2; exit 1; }
+  python3 -c 'import json,sys; c=json.load(open(sys.argv[1]))["mcpServers"]["cadence"]; print(c["url"]); print(c["headers"]["Authorization"])' "$CONFIG"
+}
+
+call_tool() {
+  local name="$1" args="${2:-{\}}"
+  local url auth
+  { read -r url; read -r auth; } < <(endpoint)
+  curl -sS -X POST "$url" \
+    -H "Authorization: $auth" \
+    -H "Content-Type: application/json" \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$name\",\"arguments\":$args}}" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result",{}).get("content",[{}])[0].get("text"); print(r if r else json.dumps(d, indent=2))'
+}
+
+case "${1:-}" in
+  add)
+    [[ $# -ge 2 ]] || usage 1
+    shift
+    open_url "cadence://add?text=$(urlencode "$*")"
+    ;;
+  start)
+    if [[ $# -ge 2 ]]; then open_url "cadence://start?id=$(urlencode "$2")"; else open_url "cadence://start"; fi
+    ;;
+  stop)   open_url "cadence://stop" ;;
+  show)   [[ $# -ge 2 ]] || usage 1; open "cadence://show?id=$(urlencode "$2")" ;;
+  report) open "cadence://report" ;;
+  tasks)  call_tool list_tasks "{\"limit\": ${2:-20}}" ;;
+  call)   [[ $# -ge 2 ]] || usage 1; call_tool "$2" "${3:-{\}}" ;;
+  -h|--help|help|"") usage ;;
+  *) echo "unknown command: $1" >&2; usage 1 ;;
+esac

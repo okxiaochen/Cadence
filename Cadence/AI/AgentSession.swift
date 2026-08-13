@@ -38,6 +38,10 @@ final class AgentSession {
         didSet { configuration.save() }
     }
 
+    /// The thread the panel is showing. Every run is filed against it, so the
+    /// panel can be cleared and a past conversation reopened.
+    private(set) var conversationID = UUID().uuidString
+
     private let model: AppModel
     private let server = MCPServer()
     private let runner = CLIRunner()
@@ -92,11 +96,14 @@ final class AgentSession {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        // Captured before this turn is appended, so the model is told what came
+        // *before* rather than being handed the question twice.
+        let history = transcriptForPrompt()
         messages.append(ChatMessage(role: .user, text: trimmed))
         // Synchronously, so the button disables and the spinner appears on the
         // click rather than a run-loop tick later.
         status = .running
-        task = Task { await run(prompt: trimmed, surface: surface) }
+        task = Task { await run(prompt: trimmed, surface: surface, history: history) }
     }
 
     func cancel() {
@@ -107,7 +114,82 @@ final class AgentSession {
         status = .idle
     }
 
-    private func run(prompt: String, surface: AISurface) async {
+    // MARK: - Conversations
+
+    /// Clears the panel and starts a fresh thread. The old one is not lost —
+    /// every turn was filed against its conversation and can be reopened.
+    func startNewConversation() {
+        guard !status.isRunning else { return }
+        conversationID = UUID().uuidString
+        messages = []
+        proposal = nil
+        toolCalls = []
+        rawOutput = ""
+        commandLine = ""
+    }
+
+    var isEmptyConversation: Bool { messages.isEmpty }
+
+    func conversations() -> [AIConversation] {
+        (try? model.database.writer.read { db in
+            try AIRunRepository.conversations(db)
+        }) ?? []
+    }
+
+    /// Reopens a past thread: its turns become the transcript again, and
+    /// anything sent next continues it.
+    func open(_ conversation: AIConversation) {
+        guard !status.isRunning else { return }
+        let runs = (try? model.database.writer.read { db in
+            try AIRunRepository.runs(db, conversationID: conversation.id)
+        }) ?? []
+
+        conversationID = conversation.id
+        proposal = nil
+        messages = runs.flatMap { run -> [ChatMessage] in
+            var turn = [ChatMessage(role: .user, text: run.prompt)]
+            let reply = parseFinalText(from: run.rawOutput)
+            if !reply.isEmpty {
+                turn.append(ChatMessage(role: .assistant, text: reply))
+            } else if run.statusValue == .failed {
+                turn.append(ChatMessage(role: .system, text: "That run failed.", isError: true))
+            }
+            return turn
+        }
+    }
+
+    func deleteConversation(_ conversation: AIConversation) {
+        try? model.database.writer.write { db in
+            try AIRunRepository.deleteConversation(db, id: conversation.id)
+        }
+        if conversation.id == conversationID { startNewConversation() }
+    }
+
+    /// The last few turns, for the CLI.
+    ///
+    /// Each run is a fresh process with no memory of the last one, so without
+    /// this the panel only looked like a conversation: "make it 30 minutes
+    /// instead" reached a model that had never heard of *it*. Capped at three
+    /// exchanges and trimmed, because this is prepended to every prompt and a
+    /// long thread would push out the request itself.
+    private func transcriptForPrompt(maxTurns: Int = 6, maxCharacters: Int = 400) -> String {
+        let recent = messages
+            .filter { $0.role != .system && !$0.isError }
+            .suffix(maxTurns)
+        guard !recent.isEmpty else { return "" }
+
+        return recent
+            .map { message in
+                let who = message.role == .user ? "User" : "You"
+                let text = message.text.count > maxCharacters
+                    ? String(message.text.prefix(maxCharacters)) + "…"
+                    : message.text
+                return "\(who): \(text)"
+            }
+            .joined(separator: "\n")
+    }
+
+    private func run(prompt: String, surface: AISurface, history: String = "") async {
         status = .running
         toolCalls = []
         rawOutput = ""
@@ -115,6 +197,7 @@ final class AgentSession {
 
         let buffer = ProposalBuffer()
         var run = AIRun(surface: surface.rawValue, prompt: prompt, command: "")
+        run.conversationID = conversationID
 
         do {
             let invocation = try CLILocator.invocation(for: configuration.command)
@@ -133,7 +216,12 @@ final class AgentSession {
             let configURL = try writeMCPConfig()
             defer { try? FileManager.default.removeItem(at: configURL) }
 
-            let arguments = buildArguments(prompt: prompt, surface: surface, configURL: configURL)
+            let arguments = buildArguments(
+                prompt: prompt,
+                surface: surface,
+                configURL: configURL,
+                history: history
+            )
             run.command = ([invocation.displayPath] + arguments).joined(separator: " ")
             commandLine = run.command
             persist(run)
@@ -246,7 +334,12 @@ final class AgentSession {
         return url
     }
 
-    private func buildArguments(prompt: String, surface: AISurface, configURL: URL) -> [String] {
+    private func buildArguments(
+        prompt: String,
+        surface: AISurface,
+        configURL: URL,
+        history: String = ""
+    ) -> [String] {
         var arguments = configuration.arguments
 
         if configuration.transport == .mcp {
@@ -258,7 +351,7 @@ final class AgentSession {
             ]
         }
         arguments += ["--output-format", "json"]
-        arguments += ["--append-system-prompt", systemPrompt(for: surface)]
+        arguments += ["--append-system-prompt", systemPrompt(for: surface, history: history)]
         arguments.append(prompt)
         return arguments
     }
@@ -273,7 +366,7 @@ final class AgentSession {
         .map { "mcp__cadence__\($0.name)" }
     }
 
-    private func systemPrompt(for surface: AISurface) -> String {
+    private func systemPrompt(for surface: AISurface, history: String = "") -> String {
         let context = model.planningContext()
         let now = Date()
         let formatter = DateFormatter()
@@ -299,17 +392,38 @@ final class AgentSession {
 
         Memory:
         - The notes below are what you already know. Use them when planning.
-        - When you learn something durable — a preference, a project's shape, a
-          goal, a constraint — save it with `remember`. Memory is saved directly,
-          not reviewed, so store facts rather than guesses.
+        - Before you finish, ask yourself whether this turn taught you anything
+          durable about how this person works — a preference, a project's shape,
+          a goal, a constraint, a habit their records show. If it did, save it
+          with `remember`. This is a judgement you make every turn, not a chore
+          for later: the fact is cheapest to record the moment it is said.
+        - Say nothing about it in your reply unless the user asks. Storing a
+          memory is not news.
+        - Memory is saved directly, not reviewed, so store facts rather than
+          guesses.
         - When something you learn CONTRADICTS a note below, call `remember` with
           that note's existing key to replace it. Do not leave both versions.
           People change their minds; the memory should change with them.
-        - Never store individual tasks or what happened in this conversation.
+        - Store what a turn *implies*, never the turn itself: "prefers deep work
+          before lunch" is durable, "asked me to move the review to Thursday" is
+          not. Individual tasks belong in the task list, not in memory.
 
         \(surface.instruction)
 
         \(memorySection)
+        \(historySection(history))
+        """
+    }
+
+    /// Each run is a fresh process, so continuity has to be handed over
+    /// explicitly. Labelled as *earlier* turns so the model answers the new
+    /// request rather than redoing the last one.
+    private func historySection(_ history: String) -> String {
+        guard !history.isEmpty else { return "" }
+        return """
+
+        Earlier in this conversation (for context — do not redo this work):
+        \(history)
         """
     }
 

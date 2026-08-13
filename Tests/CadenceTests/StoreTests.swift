@@ -71,6 +71,34 @@ final class StoreTests: XCTestCase {
 
     // MARK: - Smart lists
 
+    func testStalledHoldsUndatedWorkNothingHasHappenedOnForAFortnight() throws {
+        let old = calendar.date(byAdding: .day, value: -40, to: now)!
+        let recent = calendar.date(byAdding: .day, value: -2, to: now)!
+
+        func insertAged(_ title: String, updatedAt: Date, dueAt: Date? = nil) throws -> Todo {
+            var todo = Todo(title: title, dueAt: dueAt)
+            todo.createdAt = old
+            todo.updatedAt = updatedAt
+            return try database.writer.write { db in
+                try todo.insert(db)
+                return todo
+            }
+        }
+
+        let forgotten = try insertAged("Rewrite the onboarding", updatedAt: old)
+        _ = try insertAged("Touched last week", updatedAt: recent)
+        _ = try insertAged("Has a date", updatedAt: old, dueAt: now)
+
+        // Progress counts as something happening, even without an edit.
+        let nudged = try insertAged("Chipping away at it", updatedAt: old)
+        try database.writer.write { db in
+            try ProgressRepository.addNote(db, taskID: nudged.id, text: "Poked at it", at: recent)
+        }
+
+        let stalled = try fetch(TodoQuery(selection: .smart(.stalled))).map(\.todo.title)
+        XCTAssertEqual(stalled, [forgotten.title])
+    }
+
     func testAnytimeIsTheCatchAllForEverythingOpen() throws {
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: now)!
         try insert("Plain")

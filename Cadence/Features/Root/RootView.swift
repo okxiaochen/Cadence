@@ -51,7 +51,12 @@ struct RootView: View {
                 }
             }
             .toolbar { toolbar }
-            .safeAreaInset(edge: .top, spacing: 0) { UpdateBanner() }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                VStack(spacing: 0) {
+                    UpdateBanner()
+                    ExternalProposalBanner()
+                }
+            }
         }
         .frame(minWidth: minimumWindowWidth, minHeight: 560)
         // Always hidden. The toolbar's own material is a different shade from

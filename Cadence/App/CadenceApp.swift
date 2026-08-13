@@ -8,6 +8,8 @@ struct CadenceApp: App {
     @State private var session: AgentSession
     @State private var updater: Updater
     @State private var notifications: NotificationService
+    @State private var externalAgents: ExternalAgentService
+    @State private var scheduledRuns: ScheduledRuns
     @State private var startupError: String?
 
     @AppStorage("workspaceMode") private var mode: WorkspaceMode = .list
@@ -32,6 +34,13 @@ struct CadenceApp: App {
         var failure: String?
         do {
             database = try AppDatabase.onDisk()
+            if database.repairedOrphanRows > 0 {
+                // Quiet repairs are how a database ends up mysteriously
+                // different. Say it once, plainly.
+                failure = "Repaired \(database.repairedOrphanRows) leftover "
+                    + "\(database.repairedOrphanRows == 1 ? "row" : "rows") from a task "
+                    + "that had been deleted outside Cadence. Your tasks are unaffected."
+            }
         } catch {
             // Never lose the session to a bad file: run in memory and say so.
             failure = "Could not open the database (\(error.localizedDescription)). "
@@ -42,9 +51,14 @@ struct CadenceApp: App {
         let model = AppModel(database: database)
         _model = State(initialValue: model)
         _quickCapture = State(initialValue: QuickCaptureController(model: model))
-        _session = State(initialValue: AgentSession(model: model))
         _updater = State(initialValue: Updater(database: database))
         _notifications = State(initialValue: NotificationService(model: model))
+        _externalAgents = State(initialValue: ExternalAgentService(model: model))
+        // One session, shared: the unattended runs go through the same agent
+        // as the chat panel, so two runs can never fight over the CLI.
+        let session = AgentSession(model: model)
+        _session = State(initialValue: session)
+        _scheduledRuns = State(initialValue: ScheduledRuns(model: model, session: session))
         _startupError = State(initialValue: failure)
     }
 
@@ -61,6 +75,8 @@ struct CadenceApp: App {
                     if let startupError { model.errorMessage = startupError }
                     await notifications.refreshAuthorization()
                     await updater.checkInBackground()
+                    externalAgents.startIfEnabled()
+                    scheduledRuns.start()
                     GlobalHotkey.shared.register(.quickCapture) { [quickCapture] in
                         Task { @MainActor in quickCapture.toggle() }
                     }
@@ -72,6 +88,10 @@ struct CadenceApp: App {
                     ) { [model] in
                         Task { @MainActor in model.toggleTimerForFocusedTask() }
                     }
+                }
+                // `cadence://…` from a script, a launcher or a git hook.
+                .onOpenURL { url in
+                    URLCommandHandler.handle(url, model: model) { openWindow(id: $0) }
                 }
         }
         .defaultSize(width: 1200, height: 760)
@@ -102,6 +122,8 @@ struct CadenceApp: App {
         Settings {
             SettingsView()
                 .environment(model)
+                .environment(externalAgents)
+                .environment(scheduledRuns)
                 .environment(preferences)
                 .environment(session)
                 .environment(updater)

@@ -66,6 +66,13 @@ outside the bundle, so replacing the app never touches it.
 - `eraseDatabaseOnSchemaChange` is **off**, including DEBUG, because a Debug run
   shares that file with the installed app. Opt in per run with
   `CADENCE_RESET_DB=1` when a reset is genuinely wanted.
+- **Never write to the database with the `sqlite3` CLI.** It has
+  `PRAGMA foreign_keys=OFF` by default, so `DELETE FROM task` leaves the tags,
+  blocks and progress entries behind. Migrations run with foreign keys *on* and
+  refuse to proceed, the app falls back to an in-memory database, and every list
+  goes empty — which reads exactly like total data loss. `repairOrphans` now
+  clears unreachable rows at startup and says so, but the fix is not to do it:
+  use the app, `cadence://`, or the MCP endpoint.
 - **Never edit or rename a shipped migration.** Users who ran it never run it
   again. Add a new one. `testShippedMigrationIdentifiersAreStable` guards this.
 - The updater snapshots and verifies the database before every install.
@@ -136,7 +143,12 @@ finds it far faster than reading the code.
   deterministic Swift.** The model picks among candidate slots and never
   computes when the user is free; this is the main reason AI scheduling is
   trustworthy.
-- `AI/` — local MCP server over loopback with a per-run bearer token. Task
+- `AI/` — local MCP server over loopback with a per-run bearer token. The same
+  server can also be kept up on a fixed port for *other* agents to drive
+  (`ExternalAgentService`, off by default): their writes stage into a proposal
+  and surface as a banner, so an outside agent can ask but never write.
+  `ScheduledRuns` adds the two unattended prompts, and polls for due-ness rather
+  than firing a timer — a sleeping Mac never fires the 21:00 timer. Task
   writes are `propose_*`, staged and reviewed. Memory writes land directly and
   self-correct via a stable key. A configured command that is not an executable
   file (an alias, a shell function, a `PATH` from `.zshrc`) is run through

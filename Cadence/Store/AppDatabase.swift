@@ -6,9 +6,57 @@ import GRDB
 final class AppDatabase {
     let writer: DatabaseWriter
 
+    /// Rows deleted at startup — see `repairOrphans`. Zero on every normal
+    /// launch; surfaced when it is not, because data was removed.
+    private(set) var repairedOrphanRows: Int
+
     init(_ writer: DatabaseWriter) throws {
         self.writer = writer
+        // Before migrating, not after a failure: a migration runs with foreign
+        // keys on and refuses to proceed while the database violates them, but
+        // a launch with nothing to migrate would sail past the damage and break
+        // on some later release instead — a long way from the cause.
+        //
+        // The damage comes from outside: `sqlite3` on the command line has
+        // foreign keys *off* by default, so anyone (or any script, or any
+        // agent) deleting a task there leaves its tags and blocks behind. The
+        // app then falls back to an in-memory database and looks, convincingly,
+        // like it lost everything.
+        repairedOrphanRows = (try? Self.repairOrphans(writer)) ?? 0
         try Self.migrator.migrate(writer)
+    }
+
+    /// Deletes rows whose parent no longer exists.
+    ///
+    /// Driven by `foreign_key_check` rather than a hand-written list of tables,
+    /// so a table added later is covered without anyone remembering to come
+    /// back here. These rows are unreachable by definition — nothing can read
+    /// them, since the task they hang off is gone.
+    @discardableResult
+    static func repairOrphans(_ writer: DatabaseWriter) throws -> Int {
+        try writer.write { db in
+            let violations = try Row.fetchAll(db, sql: "PRAGMA foreign_key_check")
+            guard !violations.isEmpty else { return 0 }
+
+            var byTable: [String: [Int64]] = [:]
+            for row in violations {
+                guard let table: String = row[0], let rowID: Int64 = row[1] else { continue }
+                byTable[table, default: []].append(rowID)
+            }
+
+            var deleted = 0
+            for (table, rowIDs) in byTable {
+                // The table name comes from SQLite's own pragma, not from user
+                // input, so quoting it is enough.
+                let placeholders = placeholders(rowIDs.count)
+                try db.execute(
+                    sql: "DELETE FROM \"\(table)\" WHERE rowid IN (\(placeholders))",
+                    arguments: StatementArguments(rowIDs)
+                )
+                deleted += db.changesCount
+            }
+            return deleted
+        }
     }
 
     /// The real on-disk database: ~/Library/Application Support/Cadence/cadence.sqlite
@@ -199,6 +247,15 @@ final class AppDatabase {
         // need the same pairing column blocks have.
         migrator.registerMigration("v8_progress_external_event_id") { db in
             try db.execute(sql: "ALTER TABLE progress_entry ADD COLUMN externalEventID TEXT")
+        }
+
+        // M9: runs belong to a conversation, so the panel can be cleared,
+        // reopened, and looked back over.
+        migrator.registerMigration("v9_ai_conversation") { db in
+            try db.execute(sql: "ALTER TABLE ai_run ADD COLUMN conversationID TEXT")
+            // Everything that already ran becomes its own conversation rather
+            // than one enormous history with no boundaries in it.
+            try db.execute(sql: "UPDATE ai_run SET conversationID = id WHERE conversationID IS NULL")
         }
 
         return migrator

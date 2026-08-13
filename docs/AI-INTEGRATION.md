@@ -150,6 +150,69 @@ The `AIProvider` protocol abstracts both, so surfaces don't know which is in use
 
 ---
 
+### 3.4 `cadence://` — the scripting entry point
+
+For humans and their launchers (Raycast, a shell alias, a git hook). Agents want
+§3.5 instead: a URL fires and forgets and cannot answer a question.
+
+| URL | Does |
+|---|---|
+| `cadence://add?text=…` | Files a task. The **whole capture grammar** works — `#tag`, `@project`, `!2`, `~45m`, `tomorrow` — because the text goes through the same `CaptureParser` the composer uses. `title=` is accepted as an alias. |
+| `cadence://start[?id=…]` | Starts the timer. Without an id, the same guess ⌥⇧Space makes: selection, then whatever the agenda says is underway or next. |
+| `cadence://stop` | Stops every running timer. |
+| `cadence://show?id=…` | Opens the detail panel for a task and brings the app forward. |
+| `cadence://report` | Opens the time report. |
+
+Writes do **not** steal focus (`open -g`); `show` and `report` obviously do.
+
+`scripts/cadence` wraps these, and routes reads over the MCP endpoint below:
+
+```sh
+cadence add "Fix the flaky test #backend ~1h tomorrow"
+cadence start          # or: cadence start <task-id>
+cadence stop
+cadence tasks 20       # reads — needs §3.5 switched on
+cadence call get_time_report '{"from":"2026-08-01T00:00:00Z","to":"2026-08-08T00:00:00Z"}'
+```
+
+### 3.5 The endpoint other agents connect to
+
+The same server, kept up for as long as the app runs, on a **fixed port** with a
+token that survives relaunches (`ExternalAgentService`). Off by default; enabled
+in Settings › AI › Other tools, which also prints the `claude mcp add` line.
+
+- Token: `~/.config/cadence/mcp-token`, mode 600, generated once. A client
+  configured today has to keep working tomorrow, which rules out the per-run
+  token the app's own CLI gets.
+- Client config: `~/.config/cadence/mcp.json`, rewritten on every start.
+- Loopback only, bearer token on every request, unexpected `Origin` rejected —
+  the same checks the per-run server makes.
+
+**An external agent gets no shortcut to the database.** Its `propose_*` calls
+land in a proposal buffer, are validated by the same `ProposalValidator`, and
+appear as a banner above the workspace to accept or discard. The only immediate
+writes are the journal tools and memory, which add rather than alter.
+
+Staged changes are presented on a 1.5s debounce after the last write call (or
+`explain`), so a plan arrives as one card rather than appearing half-built.
+
+### 3.6 Unattended runs
+
+`ScheduledRuns` fires two prompts nobody types (both off by default):
+
+- **Nightly plan** — drafts tomorrow from tasks that already exist, sized
+  against what the user's own records say they get through. Waiting as ghosts in
+  the morning.
+- **Weekly reflection** — reads a fortnight of tracked time and progress notes
+  and writes what it implies into `memory`, reusing keys rather than
+  accumulating contradictions. Changes nothing else.
+
+Due-ness is **polled**, not timed: a Mac asleep at 21:00 never fires a timer set
+for 21:00, but waking and asking "is it past the hour, and has today's run
+happened?" survives that.
+
+---
+
 ## 4. Tool catalog
 
 Exposed over MCP. Read tools are unrestricted; write tools are **staged** — they

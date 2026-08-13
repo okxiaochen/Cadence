@@ -504,6 +504,26 @@ enum TodoRepository {
             // since there is no Inbox for them to hide in any more.
             clauses.append("status IN ('inbox', 'todo', 'doing')")
 
+        case .smart(.stalled):
+            // Nothing has happened on it for a fortnight, and nothing is
+            // scheduled to. Dated work is left out: it has a day and will
+            // surface on its own. "Nothing happened" means no progress entry
+            // and no edit — the created date is the fallback for a task that
+            // has never been touched at all.
+            clauses.append("""
+                \(available) AND dueAt IS NULL AND (
+                  COALESCE(
+                    (SELECT MAX(p.startedAt) FROM progress_entry p WHERE p.taskID = task.id),
+                    task.updatedAt,
+                    task.createdAt
+                  ) < :quietBefore
+                )
+                """)
+            args["now"] = now
+            args["quietBefore"] = calendar.date(
+                byAdding: .day, value: -StalledList.quietDays, to: now
+            ) ?? now
+
         case .smart(.logbook):
             clauses.append("status IN ('done', 'cancelled') AND completedAt >= :logbookCutoff")
             args["logbookCutoff"] = logbookCutoff

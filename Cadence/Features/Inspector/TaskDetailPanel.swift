@@ -32,11 +32,64 @@ final class TaskDetailPanelController: NSObject, NSWindowDelegate {
         self.panel = panel
 
         applyAppearance(to: panel)
-        if !panel.isVisible || placedForID != model.inspectedID {
-            place(panel)
+        let wasVisible = panel.isVisible
+
+        if !wasVisible || placedForID != model.inspectedID {
+            place(panel, animated: wasVisible)
             placedForID = model.inspectedID
         }
+
+        if wasVisible {
+            panel.orderFront(nil)
+        } else {
+            appear(panel)
+        }
+    }
+
+    /// Grows out of the click that opened it.
+    ///
+    /// A panel that simply exists on the next frame reads as a different window
+    /// arriving from nowhere; one that expands from the pointer reads as *this
+    /// task* opening. The frame is animated as well as the opacity because
+    /// fading alone still starts at full size, which is the part that jars.
+    private func appear(_ panel: NSPanel) {
+        let target = panel.frame
+        let shrunk = NSRect(
+            x: target.midX - target.width * 0.46,
+            y: target.midY - target.height * 0.46,
+            width: target.width * 0.92,
+            height: target.height * 0.92
+        )
+
+        panel.alphaValue = 0
+        panel.setFrame(shrunk, display: false)
         panel.orderFront(nil)
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            // Out of the gate quickly, settling at the end: a linear window
+            // animation looks mechanical at this size.
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+            panel.animator().setFrame(target, display: true)
+        }
+    }
+
+    /// Fades out rather than blinking away, so closing one task and opening
+    /// another does not flash.
+    private func disappear(_ panel: NSPanel) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak panel] in
+            guard let panel else { return }
+            // Only if nothing reopened it in the meantime.
+            if panel.alphaValue == 0 {
+                panel.orderOut(nil)
+                panel.alphaValue = 1
+            }
+        }
     }
 
     /// The window half of the background setting.
@@ -62,7 +115,7 @@ final class TaskDetailPanelController: NSObject, NSWindowDelegate {
     /// rect out of each of those means a `GeometryReader` per row for a value
     /// that is stale the moment the list scrolls. The click that opened the
     /// panel happened at the pointer, so the pointer *is* where the task is.
-    private func place(_ panel: NSPanel) {
+    private func place(_ panel: NSPanel, animated: Bool = false) {
         let size = panel.frame.size
         let pointer = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(pointer) }
@@ -81,11 +134,26 @@ final class TaskDetailPanelController: NSObject, NSWindowDelegate {
         var top = pointer.y + size.height / 3
         top = min(max(top, visible.minY + size.height + 8), visible.maxY - 8)
 
-        panel.setFrameTopLeftPoint(CGPoint(x: x, y: top))
+        let point = CGPoint(x: x, y: top)
+        guard animated else {
+            panel.setFrameTopLeftPoint(point)
+            return
+        }
+        // Already open and following you to another task: slide rather than
+        // teleport, so it stays the same panel rather than looking like a new
+        // one at a new place.
+        var frame = panel.frame
+        frame.origin = CGPoint(x: point.x, y: point.y - frame.height)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(frame, display: true)
+        }
     }
 
     private func hide() {
-        panel?.orderOut(nil)
+        guard let panel, panel.isVisible else { return }
+        disappear(panel)
     }
 
     private func makePanel() -> NSPanel {

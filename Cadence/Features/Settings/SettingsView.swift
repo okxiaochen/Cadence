@@ -192,14 +192,85 @@ private struct CalendarSettings: View {
 
 private struct AISettings: View {
     @Environment(AgentSession.self) private var session
+    @Environment(ExternalAgentService.self) private var externalAgents
+    @Environment(ScheduledRuns.self) private var scheduledRuns
 
     @State private var testResult: String?
     @State private var isTesting = false
+    @State private var copiedSetup = false
 
     var body: some View {
         @Bindable var session = session
+        @Bindable var externalAgents = externalAgents
+        @Bindable var scheduledRuns = scheduledRuns
 
         Form {
+            Section("Unattended runs") {
+                Toggle("Draft tomorrow's plan each evening", isOn: $scheduledRuns.nightlyPlanEnabled)
+                Toggle("Look back over the fortnight on Sundays", isOn: $scheduledRuns.weeklyReflectionEnabled)
+
+                if scheduledRuns.nightlyPlanEnabled || scheduledRuns.weeklyReflectionEnabled {
+                    Picker("Run at", selection: $scheduledRuns.nightlyHour) {
+                        ForEach([18, 19, 20, 21, 22, 23], id: \.self) { hour in
+                            Text("\(hour):00").tag(hour)
+                        }
+                    }
+                }
+
+                Text("Both stage a proposal for you to review in the morning and "
+                     + "never write on their own. The Sunday run only updates what "
+                     + "the assistant knows about how you work.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Other tools") {
+                Toggle("Let other tools connect over MCP", isOn: $externalAgents.isEnabled)
+
+                Text("Opens a loopback endpoint so Claude Code, an editor or a "
+                     + "script can read your tasks and propose changes. Proposals "
+                     + "are reviewed here before anything is written — the same "
+                     + "review the built-in assistant goes through.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if externalAgents.isEnabled {
+                    LabeledContent("Port") {
+                        TextField("", value: $externalAgents.port, format: .number.grouping(.never))
+                            .quietField(width: 70)
+                    }
+
+                    if let endpoint = externalAgents.endpoint {
+                        LabeledContent("Endpoint") {
+                            Text(endpoint).font(.caption.monospaced()).textSelection(.enabled)
+                        }
+                    }
+
+                    HStack {
+                        Button(copiedSetup ? "Copied" : "Copy setup command") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(
+                                externalAgents.setupCommand, forType: .string
+                            )
+                            copiedSetup = true
+                        }
+                        .controlSize(.small)
+                        Spacer()
+                        if let error = externalAgents.lastError {
+                            Text(error).font(.caption).foregroundStyle(.orange)
+                        } else if let activity = externalAgents.lastActivity {
+                            Text("last call \(Format.time(activity))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Text("The token lives in ~/.config/cadence/mcp-token (mode 600) "
+                         + "and survives relaunches, so a client configured once "
+                         + "keeps working.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Section("AI CLI") {
                 TextField("Command", text: $session.configuration.command)
                     .onSubmit { session.checkConfiguration() }

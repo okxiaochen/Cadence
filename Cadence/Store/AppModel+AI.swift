@@ -43,6 +43,31 @@ extension AppModel {
         return proposal
     }
 
+    /// Validates and shows what an outside agent staged over the MCP endpoint.
+    ///
+    /// Same validator, same review card as an in-app run: an external agent
+    /// gets no shortcut to the database, only a faster way to ask.
+    func presentExternalProposal(changes: [ProposedChange], summary: String, warnings: [String]) {
+        let reviewed = review(
+            changes,
+            runID: "external-\(UUID().uuidString)",
+            summary: summary.isEmpty ? "Proposed by a connected agent." : summary,
+            warnings: warnings
+        )
+        guard !reviewed.changes.isEmpty else { return }
+        externalProposal = reviewed
+    }
+
+    func applyExternalProposal() {
+        guard let externalProposal else { return }
+        apply(externalProposal, actionName: "Agent Changes")
+        self.externalProposal = nil
+    }
+
+    func discardExternalProposal() {
+        externalProposal = nil
+    }
+
     /// Applies the accepted changes as **one** transaction and **one** undo step.
     /// Returns how many landed.
     @discardableResult
