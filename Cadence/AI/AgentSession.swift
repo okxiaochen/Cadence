@@ -387,10 +387,18 @@ final class AgentSession {
         - Never schedule over busy time unless the user explicitly asks.
         - Respect due dates. If something cannot fit, say so in explain rather
           than forcing it.
+        - A scheduled task's estimate IS the length of its block. Propose a block
+          of exactly the estimate, or change the estimate to match. They cannot
+          disagree — if you leave them disagreeing, one silently overwrites the
+          other and the result is not what you intended.
+        - Before you put a number on how long something takes, call
+          get_estimate_history. Their own records of what this kind of work
+          actually took beat your intuition about it.
         - Stage every task change with a propose_* tool. Nothing you do to their
           tasks is saved directly; the user reviews it first.
         - Call explain last, with a one-paragraph summary and any warnings.
         - Be concise. Do not narrate your tool use.
+        \(workItemRules)
 
         Memory:
         - The notes below are what you already know. Use them when planning.
@@ -409,11 +417,52 @@ final class AgentSession {
         - Store what a turn *implies*, never the turn itself: "prefers deep work
           before lunch" is durable, "asked me to move the review to Thursday" is
           not. Individual tasks belong in the task list, not in memory.
+        - Set `source` honestly, because it decides what gets questioned later.
+          "user" means they told you, and never expires — there is nothing to
+          re-check it against, so claiming it for a guess buries the guess
+          permanently. Use "inferred" for anything you worked out from their
+          records, or name the system you read it from. Everything that is not
+          "user" comes back for review.
+        - A note marked UNVERIFIED below is one nobody has confirmed lately. Use
+          it if you must, but check it against what you can see now, and then
+          say so: confirm_memory if it holds, remember with the same key if it
+          has changed, forget if it is simply over.
 
         \(surface.instruction)
 
         \(memorySection)
         \(historySection(history))
+        """
+    }
+
+    /// Empty unless the Meegle connector is on, matching the tool catalog.
+    /// Describing a tool the model has not been given is worse than saying
+    /// nothing: it spends the turn trying to call it and reports the failure as
+    /// though the user's data were missing.
+    private var workItemRules: String {
+        Self.workItemRules(enabled: MeegleClient.configured() != nil)
+    }
+
+    /// Split from the property so both branches are testable without reaching
+    /// through `Preferences.shared`.
+    static func workItemRules(enabled: Bool) -> String {
+        guard enabled else { return "" }
+        return """
+
+        Work items:
+        - list_work_items is what their team is tracking. Read it before planning
+          a day or a week: most of what this person is committed to is there, not
+          in the list they remembered to type here.
+        - Overdue first — call it with action "overdue" before "todo".
+        - Check alreadyInCadence. Propose creating only the ones that are missing,
+          and pass externalID straight through, or the next sync makes a second
+          copy of work that is already on their plate.
+        - A work item title names a symptom; a task names an action. "User cannot
+          log-in" is a ticket. "Reproduce the login failure" is a task. Write the
+          task the way they would have written it, and keep the ticket's words in
+          the notes rather than the title.
+        - Most carry no dates at all. That is not missing information — deciding
+          when they happen is the whole job.
         """
     }
 

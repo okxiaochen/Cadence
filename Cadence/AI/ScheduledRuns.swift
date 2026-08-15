@@ -104,7 +104,10 @@ final class ScheduledRuns {
         if nightlyPlanEnabled, isNightlyDue(now: now) {
             lastNightlyRun = now
             UserDefaults.standard.set(now, forKey: Key.lastNightly)
-            session.send(Self.nightlyPrompt, surface: .nightly)
+            session.send(
+                Self.nightlyPrompt(includingWorkItems: MeegleClient.configured() != nil),
+                surface: .nightly
+            )
         }
     }
 
@@ -126,22 +129,45 @@ final class ScheduledRuns {
 
     /// Deliberately specific about *not* inventing work. An unattended run that
     /// quietly adds tasks is how a planner loses trust in one night.
-    static let nightlyPrompt = """
-        Plan tomorrow. Work only from tasks that already exist — do not invent \
-        any, and do not create tasks.
+    /// The work-item step is present only when the connector is, matching the
+    /// tool catalog and the system prompt.
+    ///
+    /// It relaxes "do not create tasks", and deliberately only that far. The
+    /// original rule was there because a planner that quietly adds work loses
+    /// trust in one night — but a ticket already assigned to this person is not
+    /// invented work, it is work they are on the hook for whether or not they
+    /// typed it in. The invention ban stands; what lifts is the ban on writing
+    /// down something they are already committed to. Bounded to three so the
+    /// morning's card is still something you can read over coffee.
+    static func nightlyPrompt(includingWorkItems: Bool) -> String {
+        let workItems = includingWorkItems ? """
+
+            2. Call list_work_items with action "overdue", then "todo". Anything \
+            marked alreadyInCadence is already here — for at most three of the \
+            rest that genuinely matter tomorrow, use propose_create_task with \
+            the externalID passed through, then schedule them like anything \
+            else. Do not import the whole list; leave the ones that can wait.
+            """ : ""
+
+        return """
+        Plan tomorrow. Do not invent work — everything you schedule must be \
+        something I already have, either here or as a ticket assigned to me.
 
         1. Call get_schedule for tomorrow to see what is already committed.
-        2. Call list_tasks for what is due or overdue.
-        3. Call get_time_report for the last 7 days to see how much I actually \
+        \(workItems)
+        3. Call list_tasks for what is due or overdue.
+        4. Call get_time_report for the last 7 days to see how much I actually \
         get through in a day, and do not schedule more than that.
-        4. Call get_estimate_history for anything you are unsure about, and \
+        5. Call get_estimate_history for anything you are unsure about, and \
         trust it over the stated estimate.
-        5. Use find_free_slots and propose_schedule for the few tasks that \
+        6. Use find_free_slots and propose_schedule for the few tasks that \
         matter most. Leave the day with room in it.
 
         Finish with explain: one short paragraph saying what you planned and \
-        why, in plain language.
+        why, in plain language. If you brought anything in from a ticket, say \
+        which — I should never find work here that I cannot place.
         """
+    }
 
     static let reflectionPrompt = """
         Look back over the past two weeks and update what you know about me.
