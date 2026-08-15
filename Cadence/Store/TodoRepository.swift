@@ -82,6 +82,33 @@ enum TodoRepository {
         try Todo.fetchOne(db, sql: "SELECT * FROM task WHERE id = ?", arguments: [id])
     }
 
+    static func fetch(_ db: Database, externalID: String) throws -> Todo? {
+        try Todo.fetchOne(
+            db, sql: "SELECT * FROM task WHERE externalID = ?", arguments: [externalID]
+        )
+    }
+
+    /// Which of these external ids Cadence already has a task for.
+    ///
+    /// Asked before an import so the model proposes only what is missing. It
+    /// returns the ids rather than the tasks because that is all the caller
+    /// needs, and because a work item the user has since deleted the task for
+    /// should read as absent, not as an error.
+    static func externalIDs(
+        _ db: Database, in candidates: some Collection<String>
+    ) throws -> Set<String> {
+        guard !candidates.isEmpty else { return [] }
+        let found = try String.fetchAll(
+            db,
+            sql: """
+                SELECT externalID FROM task
+                WHERE externalID IN (\(placeholders(candidates.count)))
+                """,
+            arguments: StatementArguments(Array(candidates))
+        )
+        return Set(found)
+    }
+
     static func fetch(_ db: Database, ids: some Collection<String>) throws -> [Todo] {
         guard !ids.isEmpty else { return [] }
         return try Todo.fetchAll(

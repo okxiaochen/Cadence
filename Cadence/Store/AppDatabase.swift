@@ -258,6 +258,47 @@ final class AppDatabase {
             try db.execute(sql: "UPDATE ai_run SET conversationID = id WHERE conversationID IS NULL")
         }
 
+        // M10: where a task came from, when it did not come from the user.
+        //
+        // Namespaced (`meegle:<space>:<id>`) rather than bare, so a second
+        // connector cannot collide with the first. The index is unique but the
+        // column is nullable, and SQLite treats NULLs as distinct — so every
+        // hand-made task stays unconstrained while an imported one can only
+        // exist once. That uniqueness is the whole point: it is what makes a
+        // re-sync revise the task it already made instead of adding another.
+        migrator.registerMigration("v10_task_external_id") { db in
+            try db.execute(sql: "ALTER TABLE task ADD COLUMN externalID TEXT")
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX idx_task_external ON task(externalID)
+                WHERE externalID IS NOT NULL
+                """)
+        }
+
+        // M11: where a memory came from, and when it was last checked.
+        //
+        // The pair is what makes a knowledge base maintainable rather than
+        // merely growing. `upsert` already self-corrects on write, but nothing
+        // ever revisits a memory nobody happens to write to again, and a fact
+        // read out of another system is exactly the kind that quietly stops
+        // being true.
+        //
+        // Source decides whether staleness even applies: something the user
+        // said stays true until they say otherwise, because there is nothing to
+        // re-check it against. Something inferred from their records, or read
+        // out of Meegle, describes a world that moves.
+        //
+        // Existing rows are backfilled as self-reported and verified when they
+        // were last written. Which of them were really inferred cannot be
+        // recovered, and marking them all stale would bury the first review in
+        // re-checks of things that are probably fine.
+        migrator.registerMigration("v11_memory_provenance") { db in
+            try db.execute(sql: """
+                ALTER TABLE memory ADD COLUMN source TEXT NOT NULL DEFAULT 'user'
+                """)
+            try db.execute(sql: "ALTER TABLE memory ADD COLUMN verifiedAt TEXT")
+            try db.execute(sql: "UPDATE memory SET verifiedAt = updatedAt")
+        }
+
         return migrator
     }
 }

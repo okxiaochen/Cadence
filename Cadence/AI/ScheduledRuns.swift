@@ -152,7 +152,14 @@ final class ScheduledRuns {
         done, what I keep rescheduling and never doing.
         3. Call search_memories first, then use remember to write down anything \
         durable you learned — REUSE an existing key when it revises something \
-        you already knew, rather than adding a second memory that contradicts it.
+        you already knew, rather than adding a second memory that contradicts it. \
+        Set source to "inferred" for anything you concluded from my records \
+        rather than heard me say.
+        4. Call list_stale_memories and work through what it returns. For each: \
+        if the records still support it, confirm_memory; if it has changed, \
+        remember with the same key; if it is simply no longer true, forget it. \
+        This is the only run that revisits them, so a memory you skip here goes \
+        another week unchecked.
 
         Only durable patterns. Not what happened this week; what it implies \
         about how I work. If two weeks of records do not support a conclusion, \

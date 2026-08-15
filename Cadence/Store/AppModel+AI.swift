@@ -98,6 +98,29 @@ extension AppModel {
                     let tagIDs = try draft.tagNames.map {
                         try CatalogRepository.findOrCreateTag(db, named: $0).id
                     }
+
+                    // Importing the same work item twice has to revise the task
+                    // rather than add a second one. Without this the unique
+                    // index throws and takes the whole proposal down with it —
+                    // and the model cannot be relied on to check first, since
+                    // it may be working from a list it fetched minutes ago.
+                    // Only fields the source actually supplied are copied, so
+                    // an estimate or a project the user set by hand survives a
+                    // re-sync.
+                    if let externalID = draft.externalID,
+                       var existing = try TodoRepository.fetch(db, externalID: externalID) {
+                        existing.title = draft.title
+                        if !draft.notes.isEmpty { existing.notes = draft.notes }
+                        if let estimate = draft.estimateMinutes {
+                            existing.estimateMinutes = estimate
+                        }
+                        if let dueAt = draft.dueAt { existing.dueAt = dueAt }
+                        if let projectID = draft.projectID { existing.projectID = projectID }
+                        try TodoRepository.update(db, existing)
+                        applied += 1
+                        continue
+                    }
+
                     var todo = Todo(
                         id: id,
                         title: draft.title,
@@ -109,6 +132,7 @@ extension AppModel {
                         parentID: draft.parentID,
                         dueAt: draft.dueAt
                     )
+                    todo.externalID = draft.externalID
                     todo.sortOrder = try TodoRepository.nextSortOrder(db, parentID: draft.parentID)
                     try TodoRepository.insert(db, todo, tagIDs: tagIDs)
 

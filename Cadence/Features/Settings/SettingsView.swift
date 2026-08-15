@@ -194,15 +194,26 @@ private struct AISettings: View {
     @Environment(AgentSession.self) private var session
     @Environment(ExternalAgentService.self) private var externalAgents
     @Environment(ScheduledRuns.self) private var scheduledRuns
+    @Environment(Preferences.self) private var preferences
 
     @State private var testResult: String?
     @State private var isTesting = false
     @State private var copiedSetup = false
 
+    /// Resolved on each render rather than cached: the CLI can be installed, or
+    /// its short-lived token can expire, while this window is open.
+    private var meegleStatus: String {
+        guard let client = try? MeegleClient() else {
+            return "meegle CLI not found — npx @lark-project/meegle@latest install"
+        }
+        return client.isAuthenticated() ? "Signed in" : "Run `meegle auth login`"
+    }
+
     var body: some View {
         @Bindable var session = session
         @Bindable var externalAgents = externalAgents
         @Bindable var scheduledRuns = scheduledRuns
+        @Bindable var preferences = preferences
 
         Form {
             Section("Unattended runs") {
@@ -220,6 +231,24 @@ private struct AISettings: View {
                 Text("Both stage a proposal for you to review in the morning and "
                      + "never write on their own. The Sunday run only updates what "
                      + "the assistant knows about how you work.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Meegle") {
+                Toggle("Read my work items", isOn: $preferences.meegleEnabled)
+
+                if preferences.meegleEnabled {
+                    LabeledContent("Status") {
+                        Text(meegleStatus).foregroundStyle(.secondary)
+                    }
+                }
+
+                Text("Lets the assistant see the tickets assigned to you in Meegle "
+                     + "(Lark Project) so a plan covers what your team is tracking, "
+                     + "not only what you typed here. It reads through your own "
+                     + "`meegle` CLI login, so it sees exactly what you see and "
+                     + "Cadence never holds a token. Work items are only ever read; "
+                     + "turning them into tasks still goes through review.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

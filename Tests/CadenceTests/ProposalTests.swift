@@ -260,6 +260,63 @@ final class ProposalTests: XCTestCase {
         XCTAssertEqual(updated?.title, "Keep my title")
     }
 
+    // MARK: - Importing the same work item twice
+
+    private func applyImport(_ draft: TaskDraft, id: String = UUID().uuidString) throws -> Int {
+        var proposal = Proposal(runID: "run")
+        proposal.changes = try review([.createTask(id: id, draft: draft)])
+        undo.beginUndoGrouping()
+        defer { undo.endUndoGrouping() }
+        return model.apply(proposal)
+    }
+
+    /// The model cannot be relied on to check first — it may be planning from a
+    /// list it fetched minutes ago — and the unique index would otherwise throw
+    /// and take the whole proposal down with it.
+    func testImportingAWorkItemTwiceRevisesOneTask() throws {
+        XCTAssertEqual(try applyImport(TaskDraft(
+            title: "User cannot log-in", externalID: "meegle:space:14160326"
+        )), 1)
+        XCTAssertEqual(try applyImport(TaskDraft(
+            title: "User cannot log in (renamed)", externalID: "meegle:space:14160326"
+        )), 1)
+
+        let tasks = try database.writer.read { db in
+            try Todo.fetchAll(db, sql: "SELECT * FROM task WHERE externalID IS NOT NULL")
+        }
+        XCTAssertEqual(tasks.count, 1, "a second import must revise, not duplicate")
+        XCTAssertEqual(tasks.first?.title, "User cannot log in (renamed)")
+    }
+
+    /// Meegle owns the title; the estimate is the user's own judgement and a
+    /// re-sync has no business resetting it.
+    func testAReSyncKeepsWhatTheUserSetByHand() throws {
+        try applyImport(TaskDraft(title: "Ticket", externalID: "meegle:space:1"))
+
+        var task = try XCTUnwrap(try database.writer.read { db in
+            try TodoRepository.fetch(db, externalID: "meegle:space:1")
+        })
+        task.estimateMinutes = 90
+        try database.writer.write { db in try TodoRepository.update(db, task) }
+
+        try applyImport(TaskDraft(title: "Ticket, retitled", externalID: "meegle:space:1"))
+
+        let after = try XCTUnwrap(try database.writer.read { db in
+            try TodoRepository.fetch(db, externalID: "meegle:space:1")
+        })
+        XCTAssertEqual(after.title, "Ticket, retitled")
+        XCTAssertEqual(after.estimateMinutes, 90)
+    }
+
+    func testTwoTasksWithoutAnExternalIDAreStillTwoTasks() throws {
+        try applyImport(TaskDraft(title: "Same name"))
+        try applyImport(TaskDraft(title: "Same name"))
+        let count = try database.writer.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM task")
+        }
+        XCTAssertEqual(count, 2)
+    }
+
     func testGhostIntervalsCoverOnlyAcceptedSchedulingChanges() throws {
         let todo = try insert("Schedule me")
         var proposal = Proposal(runID: "run")

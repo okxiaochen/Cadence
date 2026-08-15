@@ -69,6 +69,43 @@ final class StoreTests: XCTestCase {
         }
     }
 
+    // MARK: - Imported tasks
+
+    func testExternalIDsReportsOnlyWhatIsAlreadyHere() throws {
+        var mirrored = try insert("Mirrored")
+        mirrored.externalID = "meegle:space:1"
+        try database.writer.write { db in try TodoRepository.update(db, mirrored) }
+
+        let found = try database.writer.read { db in
+            try TodoRepository.externalIDs(db, in: ["meegle:space:1", "meegle:space:2"])
+        }
+        XCTAssertEqual(found, ["meegle:space:1"])
+    }
+
+    /// The index is unique but the column is nullable, and SQLite counts NULLs
+    /// as distinct — so hand-made tasks stay unconstrained while an imported
+    /// one can only exist once.
+    func testTwoTasksCannotShareAnExternalID() throws {
+        var first = try insert("First")
+        first.externalID = "meegle:space:1"
+        var second = try insert("Second")
+        second.externalID = "meegle:space:1"
+
+        try database.writer.write { db in try TodoRepository.update(db, first) }
+        XCTAssertThrowsError(
+            try database.writer.write { db in try TodoRepository.update(db, second) }
+        )
+    }
+
+    func testAnyNumberOfTasksMayHaveNoExternalID() throws {
+        try insert("Typed by hand")
+        try insert("Also typed by hand")
+        let count = try database.writer.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM task WHERE externalID IS NULL")
+        }
+        XCTAssertEqual(count, 2)
+    }
+
     // MARK: - What the agenda is allowed to see
 
     /// The agenda's window used to start at today, so a block from an earlier

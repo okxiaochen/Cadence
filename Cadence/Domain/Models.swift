@@ -100,9 +100,16 @@ struct Todo: Identifiable, Codable, Hashable, FetchableRecord, PersistableRecord
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
     var completedAt: Date?
+    /// Where this came from, for tasks that were not typed by the user —
+    /// `meegle:<space>:<id>`. Namespaced so connectors cannot collide, and
+    /// uniquely indexed so importing twice revises rather than duplicates.
+    var externalID: String?
 
     var isCompleted: Bool { status == .done }
     var isSubtask: Bool { parentID != nil }
+    /// Mirrored from somewhere else, so the other system is where its title and
+    /// status are decided.
+    var isImported: Bool { externalID != nil }
 
     /// True once `deferAt` has passed (or was never set).
     func isAvailable(asOf now: Date = Date()) -> Bool {

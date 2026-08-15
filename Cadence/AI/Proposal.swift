@@ -12,6 +12,9 @@ struct TaskDraft: Codable, Hashable {
     var dueAt: Date?
     var priority: Int = 0
     var parentID: String?
+    /// Set only when this task stands for something in another system, so
+    /// accepting the proposal twice cannot produce two tasks for one work item.
+    var externalID: String?
 }
 
 struct TaskPatch: Codable, Hashable {

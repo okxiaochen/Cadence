@@ -41,7 +41,45 @@ struct Memory: Identifiable, Codable, Hashable, FetchableRecord, PersistableReco
     var updatedAt: Date = Date()
     var lastUsedAt: Date?
 
+    /// Where this came from: `user` when they said so, `inferred` when it was
+    /// drawn from their own records, or a connector name such as `meegle`.
+    ///
+    /// Free-form rather than an enum because every future connector would
+    /// otherwise be a schema change, and the only thing the app needs to decide
+    /// from it is `canGoStale`.
+    var source: String = Source.user
+    /// When this was last checked against reality — not merely written.
+    var verifiedAt: Date?
+
     var categoryValue: Category { Category(rawValue: category) ?? .preference }
+
+    enum Source {
+        static let user = "user"
+        static let inferred = "inferred"
+    }
+
+    /// Whether re-checking this even means anything.
+    ///
+    /// Something the user told us stays true until they tell us otherwise;
+    /// there is no source of truth to compare it against, so "unverified for
+    /// 60 days" would be noise. Everything else describes a world that moves.
+    var canGoStale: Bool { source != Source.user }
+
+    /// Days since this was last confirmed, for memories where that matters.
+    func daysSinceVerified(asOf now: Date = Date(), calendar: Calendar = .current) -> Int? {
+        guard canGoStale else { return nil }
+        let since = verifiedAt ?? updatedAt
+        return calendar.dateComponents([.day], from: since, to: now).day
+    }
+
+    func isStale(asOf now: Date = Date(), after days: Int = Memory.staleAfterDays) -> Bool {
+        guard let elapsed = daysSinceVerified(asOf: now) else { return false }
+        return elapsed >= days
+    }
+
+    /// A fortnight of not looking is long enough for a sprint to have turned
+    /// over, and short enough that the weekly review has something to do.
+    static let staleAfterDays = 14
 }
 
 enum MemoryRepository {
@@ -69,15 +107,52 @@ enum MemoryRepository {
 
     /// Insert or replace by key. Returns whether it already existed, so the
     /// model can be told it revised something rather than added it.
+    ///
+    /// Writing is itself a verification: whoever wrote this just asserted it,
+    /// so the clock restarts. That is what lets a stale memory be cleared by
+    /// re-stating it, without a separate step.
     @discardableResult
-    static func upsert(_ db: Database, _ memory: Memory) throws -> Bool {
+    static func upsert(_ db: Database, _ memory: Memory, now: Date = Date()) throws -> Bool {
         let existing = try fetch(db, id: memory.id)
         var record = memory
         record.createdAt = existing?.createdAt ?? memory.createdAt
-        record.updatedAt = Date()
+        record.updatedAt = now
+        record.verifiedAt = now
         record.lastUsedAt = existing?.lastUsedAt
         try record.save(db)
         return existing != nil
+    }
+
+    /// Says "still true" without rewriting the note, so confirming something
+    /// costs one call rather than a full restatement the model might garble.
+    @discardableResult
+    static func confirm(_ db: Database, id: String, now: Date = Date()) throws -> Bool {
+        guard try fetch(db, id: id) != nil else { return false }
+        try db.execute(
+            sql: "UPDATE memory SET verifiedAt = ? WHERE id = ?", arguments: [now, id]
+        )
+        return true
+    }
+
+    /// What is worth re-checking, oldest first.
+    ///
+    /// Self-reported memories are excluded in SQL rather than filtered after:
+    /// they are usually the bulk of the table, and there is nothing to check
+    /// them against.
+    static func stale(
+        _ db: Database,
+        asOf now: Date = Date(),
+        after days: Int = Memory.staleAfterDays,
+        limit: Int = 10
+    ) throws -> [Memory] {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: now) ?? now
+        return try Memory.fetchAll(db, sql: """
+            SELECT * FROM memory
+            WHERE source <> ?
+              AND COALESCE(verifiedAt, updatedAt) <= ?
+            ORDER BY COALESCE(verifiedAt, updatedAt)
+            LIMIT ?
+            """, arguments: [Memory.Source.user, cutoff, limit])
     }
 
     static func delete(_ db: Database, id: String) throws -> Bool {
@@ -101,7 +176,8 @@ enum MemoryRepository {
     static func promptSection(
         _ db: Database,
         maxOutlineEntries: Int = 30,
-        maxCharacters: Int = 2_000
+        maxCharacters: Int = 2_000,
+        now: Date = Date()
     ) throws -> String {
         let memories = try all(db)
         guard !memories.isEmpty else { return "" }
@@ -121,8 +197,17 @@ enum MemoryRepository {
             lines.append("")
             lines.append("Outline — call get_memory(\"<key>\") for the full note:")
             for memory in rest.prefix(maxOutlineEntries) {
+                // Staleness is marked inline rather than left to a tool call.
+                // A model that has to ask whether a fact is current will use it
+                // as though it were, and the whole point of tracking provenance
+                // is that the doubt reaches the moment the fact is read.
+                let warning = memory.isStale(asOf: now)
+                    ? " · UNVERIFIED for \(memory.daysSinceVerified(asOf: now) ?? 0)d, "
+                        + "from \(memory.source) — re-check before relying on it"
+                    : ""
                 lines.append("- [\(memory.id)] \(memory.categoryValue.rawValue) · "
-                             + "\(memory.summary) · updated \(Format.date(memory.updatedAt))")
+                             + "\(memory.summary) · updated \(Format.date(memory.updatedAt))"
+                             + warning)
             }
             if rest.count > maxOutlineEntries {
                 lines.append("- …and \(rest.count - maxOutlineEntries) more; use search_memories.")

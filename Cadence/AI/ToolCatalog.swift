@@ -35,23 +35,30 @@ final class ToolCatalog: @unchecked Sendable {
     private let buffer: ProposalBuffer
     private let context: PlanningContext
     private let calendar: Calendar
+    /// Nil unless the user has turned the Meegle connector on and the CLI is
+    /// present. The work-item tools are then absent from `tools()` entirely
+    /// rather than present and failing — a tool the model can see is a tool it
+    /// will try, and "not configured" is a worse answer than no answer.
+    private let meegle: MeegleClient?
 
     init(
         database: AppDatabase,
         buffer: ProposalBuffer,
         context: PlanningContext,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        meegle: MeegleClient? = nil
     ) {
         self.database = database
         self.buffer = buffer
         self.context = context
         self.calendar = calendar
+        self.meegle = meegle
     }
 
     // MARK: - Descriptors
 
     func tools() -> [MCPTool] {
-        readTools + progressTools + proposalTools + memoryTools + [
+        readTools + meegleTools + progressTools + proposalTools + memoryTools + [
             MCPTool(
                 name: "explain",
                 description: "Call this LAST. Summarise what you did in one paragraph "
@@ -124,6 +131,30 @@ final class ToolCatalog: @unchecked Sendable {
         ]
     }
 
+    /// Empty unless the connector is on, so a model talking to an
+    /// unconfigured Cadence never learns these exist.
+    private var meegleTools: [MCPTool] {
+        guard meegle != nil else { return [] }
+        return [
+            MCPTool(
+                name: "list_work_items",
+                description: "The user's outstanding work in Meegle (Lark Project) — "
+                    + "the tickets their team tracks, which is where most of their "
+                    + "committed work actually lives. Call this before planning a day "
+                    + "or a week, so the plan covers what they are on the hook for "
+                    + "rather than only what they remembered to type into Cadence. "
+                    + "These are NOT Cadence tasks: to act on one, create a Cadence "
+                    + "task with propose_create_task and put its externalID in "
+                    + "externalID so a later sync revises that task instead of adding "
+                    + "a second copy. Most work items carry no dates — deciding when "
+                    + "to do them is the point of the plan, so use find_free_slots.",
+                inputSchema: object([
+                    "action": string("todo (default), overdue, this_week, or done")
+                ])
+            )
+        ]
+    }
+
     private var proposalTools: [MCPTool] {
         [
             MCPTool(
@@ -137,7 +168,10 @@ final class ToolCatalog: @unchecked Sendable {
                     "estimateMinutes": integer("How long you think it takes"),
                     "dueAt": string("ISO-8601 due date"),
                     "priority": integer("0 none, 1 low, 2 medium, 3 high"),
-                    "parentID": string("Make this a subtask of that task")
+                    "parentID": string("Make this a subtask of that task"),
+                    "externalID": string("Only when this task stands for a work item "
+                        + "from list_work_items — pass its externalID verbatim, so a "
+                        + "later sync recognises this task instead of adding a copy")
                 ], required: ["title"])
             ),
             MCPTool(
@@ -268,8 +302,35 @@ final class ToolCatalog: @unchecked Sendable {
                     "title": string("Short name"),
                     "summary": string("One line — this is what always loads"),
                     "body": string("Detail, loaded only on request"),
-                    "pinned": boolean("Load in full every time. Use sparingly.")
+                    "pinned": boolean("Load in full every time. Use sparingly."),
+                    "source": string("Where this came from: \"user\" when they told "
+                        + "you (the default, and it never goes stale), \"inferred\" "
+                        + "when you drew it from their records, or the system you "
+                        + "read it out of, e.g. \"meegle\". Be honest — this is what "
+                        + "decides whether it gets re-checked later.")
                 ], required: ["key", "category", "title", "summary"])
+            ),
+            MCPTool(
+                name: "list_stale_memories",
+                description: "Memories that have not been checked in a while and "
+                    + "could have gone out of date — oldest first. Only ones drawn "
+                    + "from records or another system: what the user told you does "
+                    + "not expire. Work through these when you have the evidence to "
+                    + "hand, then either confirm_memory, remember with the same key "
+                    + "to revise, or forget.",
+                inputSchema: object([
+                    "afterDays": integer("How stale counts as stale (default 14)"),
+                    "limit": integer("How many to return (default 10)")
+                ])
+            ),
+            MCPTool(
+                name: "confirm_memory",
+                description: "Mark a memory as still true, without rewriting it. "
+                    + "Use when you have checked and nothing changed — restating it "
+                    + "would risk garbling a note that was already right.",
+                inputSchema: object([
+                    "key": string("Memory key")
+                ], required: ["key"])
             ),
             MCPTool(
                 name: "forget",
@@ -294,6 +355,7 @@ final class ToolCatalog: @unchecked Sendable {
         case "get_schedule": return try getSchedule(arguments)
         case "find_free_slots": return try findFreeSlots(arguments)
         case "get_preferences": return preferences()
+        case "list_work_items": return try listWorkItems(arguments)
         case "propose_create_task": return try proposeCreateTask(arguments)
         case "propose_update_task": return try proposeUpdateTask(arguments)
         case "propose_schedule": return try proposeSchedule(arguments)
@@ -306,10 +368,50 @@ final class ToolCatalog: @unchecked Sendable {
         case "get_memory": return try getMemory(arguments)
         case "search_memories": return try searchMemories(arguments)
         case "remember": return try remember(arguments)
+        case "list_stale_memories": return try listStaleMemories(arguments)
+        case "confirm_memory": return try confirmMemory(arguments)
         case "forget": return try forget(arguments)
         case "explain": return try explain(arguments)
         default: throw ToolError.unknownTool(name)
         }
+    }
+
+    // MARK: - Meegle
+
+    private func listWorkItems(_ args: [String: Any]) throws -> Any {
+        guard let meegle else { throw ToolError.unknownTool("list_work_items") }
+
+        let raw = args.string("action") ?? MeegleAction.todo.rawValue
+        guard let action = MeegleAction(rawValue: raw) else {
+            throw ToolError.badArgument(
+                "action", "must be todo, overdue, this_week or done"
+            )
+        }
+
+        let items = try meegle.workItems(action: action)
+        // Which Cadence tasks already stand for these, so the model proposes
+        // creating the rest rather than a second copy of everything.
+        let known = try database.writer.read { db in
+            try TodoRepository.externalIDs(db, in: items.map(\.id))
+        }
+
+        return [
+            "action": action.rawValue,
+            "count": items.count,
+            "workItems": items.map { item -> [String: Any] in
+                var row: [String: Any] = [
+                    "externalID": item.id,
+                    "title": item.title,
+                    "project": item.projectName,
+                    "alreadyInCadence": known.contains(item.id)
+                ]
+                if let node = item.nodeName { row["node"] = node }
+                if let state = item.stateName { row["state"] = state }
+                if let start = item.startAt { row["startAt"] = ISO.string(start) }
+                if let end = item.endAt { row["dueAt"] = ISO.string(end) }
+                return row
+            }
+        ]
     }
 
     // MARK: - Read tools
@@ -605,7 +707,8 @@ final class ToolCatalog: @unchecked Sendable {
             estimateMinutes: args.int("estimateMinutes"),
             dueAt: try args.date("dueAt"),
             priority: args.int("priority") ?? 0,
-            parentID: args.string("parentID")
+            parentID: args.string("parentID"),
+            externalID: args.string("externalID")
         )))
         return ["staged": true, "taskID": id,
                 "note": "Not saved yet — the user reviews this before it is applied."]
@@ -704,7 +807,7 @@ final class ToolCatalog: @unchecked Sendable {
             throw ToolError.badArgument("key", "must contain letters or digits")
         }
 
-        let memory = Memory(
+        var memory = Memory(
             id: slug,
             category: category.rawValue,
             title: title,
@@ -712,6 +815,12 @@ final class ToolCatalog: @unchecked Sendable {
             body: args.string("body") ?? "",
             pinned: args.bool("pinned") ?? false
         )
+        // Defaults to self-reported, which is the honest reading of an
+        // unqualified claim and, being the one source that never expires, the
+        // one that costs nothing if the model simply omits the argument.
+        memory.source = Self.slug(args.string("source") ?? Memory.Source.user)
+        if memory.source.isEmpty { memory.source = Memory.Source.user }
+
         let revised = try database.writer.write { db in
             try MemoryRepository.upsert(db, memory)
         }
@@ -719,9 +828,48 @@ final class ToolCatalog: @unchecked Sendable {
             "saved": true,
             "key": slug,
             "revised": revised,
+            "source": memory.source,
             "note": revised
                 ? "Replaced the previous version of this memory."
                 : "Stored a new memory."
+        ]
+    }
+
+    private func listStaleMemories(_ args: [String: Any]) throws -> Any {
+        let days = args.int("afterDays") ?? Memory.staleAfterDays
+        let limit = min(50, max(1, args.int("limit") ?? 10))
+        let now = Date()
+        let stale = try database.writer.read { db in
+            try MemoryRepository.stale(db, asOf: now, after: days, limit: limit)
+        }
+        return [
+            "count": stale.count,
+            "memories": stale.map { memory in
+                [
+                    "key": memory.id,
+                    "category": memory.category,
+                    "summary": memory.summary,
+                    "source": memory.source,
+                    "daysSinceVerified": memory.daysSinceVerified(asOf: now) ?? 0
+                ] as [String: Any]
+            },
+            "note": "Check each against what you can see now, then confirm_memory, "
+                + "remember with the same key to revise, or forget."
+        ]
+    }
+
+    private func confirmMemory(_ args: [String: Any]) throws -> Any {
+        guard let key = args.string("key") else { throw ToolError.missingArgument("key") }
+        let slug = Self.slug(key)
+        let confirmed = try database.writer.write { db in
+            try MemoryRepository.confirm(db, id: slug)
+        }
+        return [
+            "confirmed": confirmed,
+            "key": slug,
+            "note": confirmed
+                ? "Marked as still true; the staleness clock restarts."
+                : "No memory with that key."
         ]
     }
 

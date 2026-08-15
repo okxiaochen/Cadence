@@ -22,6 +22,7 @@ final class Preferences {
         storedHourHeight = min(200, max(24, defaults.double(forKey: Key.hourHeight, default: 48)))
         hiddenCalendarIDs = Set(defaults.stringArray(forKey: Key.hiddenCalendars) ?? [])
         showsOverdue = defaults.bool(forKey: Key.showsOverdue, default: true)
+        meegleEnabled = defaults.bool(forKey: Key.meegle, default: false)
         backgroundStyle = BackgroundStyle(
             rawValue: defaults.string(forKey: Key.backgroundStyle) ?? ""
         ) ?? .solid
@@ -65,6 +66,16 @@ final class Preferences {
     }
 
     private var storedHourHeight: Double
+
+    // MARK: - Connectors
+
+    /// Whether the AI may read the user's Meegle (Lark Project) work items.
+    ///
+    /// Off by default. It reaches outside the app to a work account, which is a
+    /// decision the user makes deliberately rather than discovers — the same
+    /// reasoning as `ExternalAgentService`. While it is off the tools are not
+    /// merely refused, they are absent from the catalog.
+    var meegleEnabled: Bool { didSet { defaults.set(meegleEnabled, forKey: Key.meegle) } }
 
     // MARK: - Menu bar
 
@@ -156,6 +167,7 @@ final class Preferences {
         // The key the menu bar's own `@AppStorage` used, so anyone who has
         // already collapsed the section keeps it collapsed.
         static let showsOverdue = "menuBarShowsOverdue"
+        static let meegle = "meegleEnabled"
         static let backgroundStyle = "backgroundStyle"
         static let backgroundOpacity = "backgroundOpacity"
         static let appearance = "appAppearance"

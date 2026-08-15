@@ -202,8 +202,129 @@ final class MemoryTests: XCTestCase {
 
     func testMemoryToolsAreAdvertised() {
         let names = catalog.tools().map(\.name)
-        for tool in ["remember", "forget", "get_memory", "search_memories"] {
+        for tool in [
+            "remember", "forget", "get_memory", "search_memories",
+            "list_stale_memories", "confirm_memory"
+        ] {
             XCTAssertTrue(names.contains(tool), "missing \(tool)")
         }
+    }
+
+    // MARK: - Provenance
+    //
+    // The distinction the whole feature rests on: something the user told us
+    // stays true until they say otherwise, because there is nothing to check it
+    // against. Something inferred, or read out of another system, describes a
+    // world that moves.
+
+    private func store(
+        _ key: String,
+        source: String,
+        verifiedAt: Date?
+    ) throws {
+        var memory = Memory(
+            id: key, category: "project", title: key, summary: "about \(key)"
+        )
+        memory.source = source
+        try database.writer.write { db in try MemoryRepository.upsert(db, memory) }
+        // upsert stamps `now`, so an old verification has to be written after.
+        if let verifiedAt {
+            try database.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE memory SET verifiedAt = ? WHERE id = ?",
+                    arguments: [verifiedAt, key]
+                )
+            }
+        }
+    }
+
+    private func daysAgo(_ days: Int) -> Date {
+        Date().addingTimeInterval(-Double(days) * 86_400)
+    }
+
+    func testWhatTheUserToldUsNeverGoesStale() throws {
+        try store("dislikes-mornings", source: Memory.Source.user, verifiedAt: daysAgo(400))
+        let memory = try XCTUnwrap(all().first)
+        XCTAssertFalse(memory.canGoStale)
+        XCTAssertFalse(memory.isStale())
+        XCTAssertNil(memory.daysSinceVerified(), "there is nothing to re-check it against")
+    }
+
+    func testAnInferredFactGoesStale() throws {
+        try store("sprint-length", source: Memory.Source.inferred, verifiedAt: daysAgo(30))
+        let memory = try XCTUnwrap(all().first)
+        XCTAssertTrue(memory.isStale())
+        XCTAssertEqual(memory.daysSinceVerified(), 30)
+    }
+
+    func testSomethingReadOutOfAConnectorGoesStaleToo() throws {
+        try store("meego-space", source: "meegle", verifiedAt: daysAgo(30))
+        XCTAssertTrue(try XCTUnwrap(all().first).isStale())
+    }
+
+    func testListStaleMemoriesLeavesSelfReportedOnesAlone() throws {
+        try store("said-so", source: Memory.Source.user, verifiedAt: daysAgo(400))
+        try store("worked-out", source: Memory.Source.inferred, verifiedAt: daysAgo(400))
+        let result = try call("list_stale_memories", [:])
+        let keys = (result["memories"] as? [[String: Any]] ?? []).compactMap { $0["key"] as? String }
+        XCTAssertEqual(keys, ["worked-out"])
+    }
+
+    func testStaleMemoriesComeBackOldestFirst() throws {
+        try store("recent", source: Memory.Source.inferred, verifiedAt: daysAgo(20))
+        try store("ancient", source: Memory.Source.inferred, verifiedAt: daysAgo(90))
+        let result = try call("list_stale_memories", [:])
+        let keys = (result["memories"] as? [[String: Any]] ?? []).compactMap { $0["key"] as? String }
+        XCTAssertEqual(keys, ["ancient", "recent"])
+    }
+
+    func testConfirmingRestartsTheClockWithoutRewritingTheNote() throws {
+        try store("sprint-length", source: Memory.Source.inferred, verifiedAt: daysAgo(90))
+        XCTAssertEqual(try call("confirm_memory", ["key": "sprint-length"])["confirmed"] as? Bool, true)
+
+        let memory = try XCTUnwrap(all().first)
+        XCTAssertFalse(memory.isStale())
+        XCTAssertEqual(memory.summary, "about sprint-length", "confirming must not reword it")
+    }
+
+    func testConfirmingSomethingThatIsNotThereSaysSo() throws {
+        XCTAssertEqual(try call("confirm_memory", ["key": "nope"])["confirmed"] as? Bool, false)
+    }
+
+    /// Re-stating a fact is itself a verification, so a stale memory clears
+    /// without a separate step.
+    func testRewritingAMemoryAlsoRestartsTheClock() throws {
+        try store("sprint-length", source: Memory.Source.inferred, verifiedAt: daysAgo(90))
+        try call("remember", [
+            "key": "sprint-length", "category": "project",
+            "title": "Sprint length", "summary": "three weeks now",
+            "source": "inferred"
+        ])
+        XCTAssertFalse(try XCTUnwrap(all().first).isStale())
+    }
+
+    func testAnUnqualifiedRememberIsTreatedAsSelfReported() throws {
+        // The honest reading of an unqualified claim, and the one that costs
+        // nothing when the model simply omits the argument.
+        try call("remember", [
+            "key": "k", "category": "preference", "title": "T", "summary": "S"
+        ])
+        XCTAssertEqual(try XCTUnwrap(all().first).source, Memory.Source.user)
+    }
+
+    func testTheOutlineWarnsWhenAFactIsUnverified() throws {
+        // Marked where the fact is read, not left to a tool call — a model that
+        // has to ask whether something is current will use it as though it is.
+        try store("sprint-length", source: Memory.Source.inferred, verifiedAt: daysAgo(90))
+        let section = try database.writer.read { db in try MemoryRepository.promptSection(db) }
+        XCTAssertTrue(section.contains("UNVERIFIED"), section)
+        XCTAssertTrue(section.contains("inferred"), section)
+    }
+
+    func testTheOutlineSaysNothingAboutFreshOrSelfReportedFacts() throws {
+        try store("said-so", source: Memory.Source.user, verifiedAt: daysAgo(400))
+        try store("checked", source: Memory.Source.inferred, verifiedAt: daysAgo(1))
+        let section = try database.writer.read { db in try MemoryRepository.promptSection(db) }
+        XCTAssertFalse(section.contains("UNVERIFIED"), section)
     }
 }

@@ -70,7 +70,8 @@ final class ExternalAgentService {
             let catalog = ToolCatalog(
                 database: model.database,
                 buffer: buffer,
-                context: model.planningContext()
+                context: model.planningContext(),
+                meegle: MeegleClient.configured()
             )
             server.onToolCall = { [weak self] name in
                 Task { @MainActor in self?.noteToolCall(name) }

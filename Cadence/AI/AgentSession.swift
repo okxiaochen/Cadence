@@ -205,7 +205,8 @@ final class AgentSession {
             let catalog = ToolCatalog(
                 database: model.database,
                 buffer: buffer,
-                context: model.planningContext()
+                context: model.planningContext(),
+                meegle: MeegleClient.configured()
             )
             server.onToolCall = { [weak self] name in
                 Task { @MainActor in self?.toolCalls.append(name) }
@@ -360,7 +361,8 @@ final class AgentSession {
         ToolCatalog(
             database: model.database,
             buffer: ProposalBuffer(),
-            context: model.planningContext()
+            context: model.planningContext(),
+            meegle: MeegleClient.configured()
         )
         .tools()
         .map { "mcp__cadence__\($0.name)" }
