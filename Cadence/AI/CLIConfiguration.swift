@@ -5,10 +5,28 @@ import Foundation
 struct CLIConfiguration: Codable, Equatable {
     var command: String = "claude"
     /// Arguments placed before the prompt. `-p` puts Claude Code in print mode.
-    var arguments: [String] = ["-p"]
+    var arguments: [String] = Preset.claudeCode.arguments
     var workingDirectory: String = NSHomeDirectory()
     var timeoutSeconds: Int = 120
     var transport: Transport = .mcp
+
+    /// Arguments carrying the system prompt, with `{system}` substituted.
+    ///
+    /// **Empty means prepend it to the prompt instead**, which is the universal
+    /// fallback: every CLI takes a prompt, and — verified against their own
+    /// `--help` — neither Gemini CLI nor Cursor has a flag for a system prompt.
+    /// Without this the prompt Cadence compiles in, which is where every rule
+    /// the assistant follows lives, simply would not reach them.
+    var systemPromptArguments: [String] = Preset.claudeCode.systemPromptArguments
+
+    /// Arguments handing over the loopback MCP server: `{config}` is the config
+    /// file's path, `{tools}` the comma-separated allow-list.
+    ///
+    /// Empty means this CLI cannot be told about a server on the command line.
+    /// Gemini and Cursor both keep theirs in a settings file written by an `mcp`
+    /// subcommand, and a settings file cannot follow a port that is new every
+    /// run — so for them the answer is the JSON transport, not a worse MCP.
+    var mcpArguments: [String] = Preset.claudeCode.mcpArguments
 
     enum Transport: String, Codable, CaseIterable, Identifiable {
         case mcp, json
@@ -23,6 +41,93 @@ struct CLIConfiguration: Codable, Equatable {
         }
     }
 
+    /// Known CLIs, with flags read from each one's own `--help` rather than
+    /// guessed. A CLI that is not here is not unsupported — it is `custom`,
+    /// and the fields above are what it needs filled in.
+    enum Preset: String, CaseIterable, Identifiable, Codable {
+        case claudeCode, gemini, cursor, custom
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .claudeCode: "Claude Code"
+            case .gemini: "Gemini CLI"
+            case .cursor: "Cursor Agent"
+            case .custom: "Custom"
+            }
+        }
+
+        var command: String {
+            switch self {
+            case .claudeCode: "claude"
+            case .gemini: "gemini"
+            case .cursor: "cursor-agent"
+            case .custom: ""
+            }
+        }
+
+        var arguments: [String] {
+            switch self {
+            case .claudeCode: ["-p", "--output-format", "json"]
+            case .gemini: ["-o", "json"]
+            case .cursor: ["-p", "--output-format", "json"]
+            case .custom: []
+            }
+        }
+
+        var systemPromptArguments: [String] {
+            switch self {
+            case .claudeCode: ["--append-system-prompt", "{system}"]
+            // Neither has a flag for it; it rides in the prompt.
+            case .gemini, .cursor, .custom: []
+            }
+        }
+
+        var mcpArguments: [String] {
+            switch self {
+            case .claudeCode:
+                ["--mcp-config", "{config}", "--strict-mcp-config", "--allowed-tools", "{tools}"]
+            case .gemini, .cursor, .custom: []
+            }
+        }
+
+        /// Only Claude Code can be handed a server per run; the others would
+        /// have to be pre-configured against a port that does not stay still.
+        var transport: Transport {
+            switch self {
+            case .claudeCode: .mcp
+            case .gemini, .cursor, .custom: .json
+            }
+        }
+
+        var configuration: CLIConfiguration {
+            var configuration = CLIConfiguration()
+            configuration.command = command
+            configuration.arguments = arguments
+            configuration.systemPromptArguments = systemPromptArguments
+            configuration.mcpArguments = mcpArguments
+            configuration.transport = transport
+            return configuration
+        }
+    }
+
+    /// Which preset this matches, or `custom` once it has been edited away from
+    /// all of them. Derived rather than stored, so hand-editing a field cannot
+    /// leave the label claiming something the arguments contradict.
+    var preset: Preset {
+        Preset.allCases.first {
+            $0 != .custom && $0.configuration.matchesInvocation(of: self)
+        } ?? .custom
+    }
+
+    private func matchesInvocation(of other: CLIConfiguration) -> Bool {
+        command == other.command
+            && arguments == other.arguments
+            && systemPromptArguments == other.systemPromptArguments
+            && mcpArguments == other.mcpArguments
+    }
+
     static let key = "aiCLIConfiguration"
 
     static func load(from defaults: UserDefaults = .standard) -> CLIConfiguration {
@@ -35,6 +140,36 @@ struct CLIConfiguration: Codable, Equatable {
     func save(to defaults: UserDefaults = .standard) {
         guard let data = try? JSONEncoder().encode(self) else { return }
         defaults.set(data, forKey: Self.key)
+    }
+
+    init() {}
+
+    /// Hand-written because the synthesised decoder throws on a key it has not
+    /// seen, and `load` swallows that with `try?` — so adding a field would
+    /// have quietly reset every existing user to the defaults, losing whatever
+    /// command they had configured. Every field is optional on the way in.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let fallback = CLIConfiguration()
+        command = try container.decodeIfPresent(String.self, forKey: .command)
+            ?? fallback.command
+        workingDirectory = try container.decodeIfPresent(String.self, forKey: .workingDirectory)
+            ?? fallback.workingDirectory
+        timeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .timeoutSeconds)
+            ?? fallback.timeoutSeconds
+        transport = try container.decodeIfPresent(Transport.self, forKey: .transport)
+            ?? fallback.transport
+        systemPromptArguments = try container
+            .decodeIfPresent([String].self, forKey: .systemPromptArguments)
+            ?? fallback.systemPromptArguments
+        mcpArguments = try container.decodeIfPresent([String].self, forKey: .mcpArguments)
+            ?? fallback.mcpArguments
+
+        let stored = try container.decodeIfPresent([String].self, forKey: .arguments)
+        // Output format used to be appended in code, so anyone configured
+        // before it moved out here has the older default stored. Upgrading it
+        // in place keeps their runs on the path the code still takes.
+        arguments = (stored == ["-p"] || stored == nil) ? fallback.arguments : stored!
     }
 }
 

@@ -148,7 +148,7 @@ final class AgentSession {
         proposal = nil
         messages = runs.flatMap { run -> [ChatMessage] in
             var turn = [ChatMessage(role: .user, text: run.prompt)]
-            let reply = parseFinalText(from: run.rawOutput)
+            let reply = Self.parseFinalText(from: run.rawOutput)
             if !reply.isEmpty {
                 turn.append(ChatMessage(role: .assistant, text: reply))
             } else if run.statusValue == .failed {
@@ -250,7 +250,7 @@ final class AgentSession {
             }
 
             let (changes, summary, warnings) = buffer.drain()
-            let text = parseFinalText(from: result.stdout)
+            let text = Self.parseFinalText(from: result.stdout)
 
             if changes.isEmpty {
                 messages.append(ChatMessage(
@@ -342,19 +342,43 @@ final class AgentSession {
         history: String = ""
     ) -> [String] {
         var arguments = configuration.arguments
+        let system = systemPrompt(for: surface, history: history)
 
-        if configuration.transport == .mcp {
-            arguments += [
-                "--mcp-config", configURL.path,
-                // Ignore the user's other MCP servers so a run is hermetic.
-                "--strict-mcp-config",
-                "--allowed-tools", allowedTools.joined(separator: ",")
-            ]
+        if configuration.transport == .mcp, !configuration.mcpArguments.isEmpty {
+            arguments += configuration.mcpArguments.map { argument in
+                argument
+                    .replacingOccurrences(of: "{config}", with: configURL.path)
+                    .replacingOccurrences(
+                        of: "{tools}", with: allowedTools.joined(separator: ",")
+                    )
+            }
         }
-        arguments += ["--output-format", "json"]
-        arguments += ["--append-system-prompt", systemPrompt(for: surface, history: history)]
-        arguments.append(prompt)
+
+        // A CLI with no flag for a system prompt gets it in the prompt itself.
+        // Every CLI takes a prompt; not every one takes that flag, and the
+        // rules the assistant follows are compiled into that text — dropping it
+        // would leave the model with tools and no idea what it may do with them.
+        if configuration.systemPromptArguments.isEmpty {
+            arguments.append(Self.prependingSystemPrompt(system, to: prompt))
+        } else {
+            arguments += configuration.systemPromptArguments.map {
+                $0.replacingOccurrences(of: "{system}", with: system)
+            }
+            arguments.append(prompt)
+        }
         return arguments
+    }
+
+    /// The separator matters: without a visible break the model reads the rules
+    /// as part of the request and answers them.
+    static func prependingSystemPrompt(_ system: String, to prompt: String) -> String {
+        """
+        \(system)
+
+        ---
+
+        \(prompt)
+        """
     }
 
     private var allowedTools: [String] {
@@ -486,15 +510,32 @@ final class AgentSession {
         }) ?? ""
     }
 
-    /// `--output-format json` wraps the reply; fall back to the raw text.
-    private func parseFinalText(from stdout: String) -> String {
-        guard let data = stdout.data(using: .utf8),
+    /// Unwraps whatever envelope the CLI's JSON output mode produced.
+    ///
+    /// Only Claude Code's `{"result": …}` is verified — neither Gemini nor
+    /// Cursor was signed in on the machine this was written on, so their
+    /// success shape is inferred from their error output and their flags. The
+    /// other keys are therefore guesses, and the fallback is what actually
+    /// carries them: an envelope nobody here recognises is returned whole, so
+    /// the user sees the model's words wrapped in JSON rather than nothing.
+    static func parseFinalText(from stdout: String) -> String {
+        let raw = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = raw.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        else { return raw }
+
+        // An error is worth surfacing as itself; falling through would hand the
+        // user a JSON blob to interpret.
+        if let error = object["error"] as? [String: Any],
+           let message = error["message"] as? String {
+            return message
         }
-        if let result = object["result"] as? String { return result }
-        return stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let error = object["error"] as? String { return error }
+
+        for key in ["result", "response", "text", "output", "content"] {
+            if let value = object[key] as? String, !value.isEmpty { return value }
+        }
+        return raw
     }
 
     private func persist(_ run: AIRun) {

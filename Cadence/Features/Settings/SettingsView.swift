@@ -301,6 +301,23 @@ private struct AISettings: View {
                 }
             }
             Section("AI CLI") {
+                // Picking one rewrites the fields below rather than hiding
+                // them: the flags differ per CLI and seeing which ones changed
+                // is how you tell a preset from magic.
+                Picker("CLI", selection: Binding(
+                    get: { session.configuration.preset },
+                    set: { preset in
+                        guard preset != .custom else { return }
+                        var updated = preset.configuration
+                        updated.workingDirectory = session.configuration.workingDirectory
+                        updated.timeoutSeconds = session.configuration.timeoutSeconds
+                        session.configuration = updated
+                        session.checkConfiguration()
+                    }
+                )) {
+                    ForEach(CLIConfiguration.Preset.allCases) { Text($0.title).tag($0) }
+                }
+
                 TextField("Command", text: $session.configuration.command)
                     .onSubmit { session.checkConfiguration() }
                 TextField("Arguments", text: Binding(
@@ -311,6 +328,21 @@ private struct AISettings: View {
 
                 Picker("Transport", selection: $session.configuration.transport) {
                     ForEach(CLIConfiguration.Transport.allCases) { Text($0.title).tag($0) }
+                }
+
+                if session.configuration.systemPromptArguments.isEmpty {
+                    Text("This CLI has no system-prompt flag, so Cadence's "
+                         + "instructions are placed at the top of each prompt "
+                         + "instead. Same rules, same behaviour.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if session.configuration.transport == .mcp
+                    && session.configuration.mcpArguments.isEmpty {
+                    Label("This CLI cannot be given a server on the command line. "
+                          + "Switch Transport to JSON in / out.", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
 
                 Picker("Timeout", selection: $session.configuration.timeoutSeconds) {
