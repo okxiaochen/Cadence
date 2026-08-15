@@ -372,10 +372,26 @@ enum TodoRepository {
 
     /// Blocks that touch `range`, joined with their task and project so the
     /// grid can render titles and colors without a second pass.
-    static func scheduledBlocks(_ db: Database, in range: DateInterval) throws -> [ScheduledBlock] {
+    /// `openOnly` keeps the row count proportional to outstanding work rather
+    /// than to history. The agenda reaches back without a lower bound — work
+    /// does not stop being overdue after a fortnight — so it is the one caller
+    /// whose range can cover years of blocks.
+    static func scheduledBlocks(
+        _ db: Database,
+        in range: DateInterval,
+        openOnly: Bool = false
+    ) throws -> [ScheduledBlock] {
+        let openFilter = openOnly ? """
+            AND EXISTS (
+              SELECT 1 FROM task
+              WHERE task.id = time_block.taskID
+                AND task.status IN ('inbox', 'todo', 'doing')
+            )
+            """ : ""
         let blocks = try TimeBlock.fetchAll(db, sql: """
             SELECT * FROM time_block
             WHERE startAt < :end AND endAt > :start
+            \(openFilter)
             ORDER BY startAt
             """, arguments: ["start": range.start, "end": range.end])
         guard !blocks.isEmpty else { return [] }

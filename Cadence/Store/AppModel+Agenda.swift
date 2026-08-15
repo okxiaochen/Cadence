@@ -5,12 +5,20 @@ import GRDB
 /// the calendar view happens to be showing.
 extension AppModel {
 
+    /// Forward to the horizon, and backwards without limit.
+    ///
+    /// It used to start at today, which meant nothing from an earlier day was
+    /// ever fetched — so the Overdue section could not fill, however the
+    /// grouping was written. A bounded lookback would only move the problem:
+    /// a task three months late is still late, and dropping it silently is the
+    /// failure the section exists to prevent. The blocks query is told
+    /// `openOnly` so the cost tracks outstanding work, not history.
     var agendaRange: DateInterval {
         let calendar = Calendar.current
-        let start = calendar.startOfDay(for: Date())
-        let end = calendar.date(byAdding: .day, value: AgendaBuilder.upcomingDays + 1, to: start)
-            ?? start.addingTimeInterval(86_400)
-        return DateInterval(start: start, end: end)
+        let today = calendar.startOfDay(for: Date())
+        let end = calendar.date(byAdding: .day, value: AgendaBuilder.upcomingDays + 1, to: today)
+            ?? today.addingTimeInterval(86_400)
+        return DateInterval(start: .distantPast, end: end)
     }
 
     func restartAgendaObservation() {
@@ -19,7 +27,7 @@ extension AppModel {
 
         let observation = ValueObservation.tracking { db in
             AgendaSnapshot(
-                blocks: try TodoRepository.scheduledBlocks(db, in: range),
+                blocks: try TodoRepository.scheduledBlocks(db, in: range, openOnly: true),
                 allDay: try TodoRepository.allDay(db, in: range)
             )
         }
@@ -52,16 +60,26 @@ extension AppModel {
     }
 
     /// Open work left for today, for the status item.
-    var todayRemainingCount: Int {
-        let calendar = Calendar.current
+    ///
+    /// `includingOverdue` follows the agenda's own Overdue section: with it
+    /// collapsed the badge counts only what is still ahead today, so putting
+    /// the section away actually puts the number away too.
+    func todayRemainingCount(
+        includingOverdue: Bool = true,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Int {
         let startOfTomorrow = calendar.date(
-            byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())
-        ) ?? Date()
-        return agendaItems.filter { $0.day < startOfTomorrow && !$0.todo.isCompleted }.count
+            byAdding: .day, value: 1, to: calendar.startOfDay(for: now)
+        ) ?? now
+        return agendaItems.filter { item in
+            guard item.day < startOfTomorrow, !item.todo.isCompleted else { return false }
+            return includingOverdue || !item.isOverdue(now, calendar: calendar)
+        }.count
     }
 
-    var todayCountLabel: String {
-        let count = todayRemainingCount
+    func todayCountLabel(includingOverdue: Bool = true) -> String {
+        let count = todayRemainingCount(includingOverdue: includingOverdue)
         return count == 0 ? "" : "\(count)"
     }
 
@@ -70,8 +88,10 @@ extension AppModel {
     /// label stays as bounded as the count it replaces — minutes for the first
     /// hour, then `1h 05m`. Several at once show the longest, with how many
     /// others are going, because a menu bar has no room for a list.
-    var menuBarLabel: String {
-        guard isTimingAnything else { return todayCountLabel }
+    func menuBarLabel(includingOverdue: Bool = true) -> String {
+        guard isTimingAnything else {
+            return todayCountLabel(includingOverdue: includingOverdue)
+        }
         let minutes = max(0, longestRunningSeconds / 60)
         let elapsed = minutes < 60
             ? "\(minutes)m"

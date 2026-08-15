@@ -45,8 +45,10 @@ final class AgendaTests: XCTestCase {
     // MARK: - Grouping
 
     func testGroupsIntoTodayTomorrowAndUpcoming() {
+        // Today's block is deliberately still ahead of `now`: one that has
+        // already ended belongs under Overdue, which is a different test.
         let result = sections([
-            block("This morning", day: 5, from: 9, to: 10),
+            block("Later today", day: 5, from: 14, to: 15),
             block("Tomorrow", day: 6, from: 9, to: 10),
             block("Friday", day: 7, from: 9, to: 10)
         ])
@@ -55,7 +57,7 @@ final class AgendaTests: XCTestCase {
     }
 
     func testEmptyGroupsAreOmitted() {
-        let result = sections([block("Only today", day: 5, from: 9, to: 10)])
+        let result = sections([block("Only today", day: 5, from: 14, to: 15)])
         XCTAssertEqual(result.map(\.kind), [.today])
     }
 
@@ -63,11 +65,56 @@ final class AgendaTests: XCTestCase {
         XCTAssertTrue(sections([]).isEmpty)
     }
 
-    func testWorkLeftOverFromYesterdayShowsWithToday() {
-        // Otherwise it lands in no section at all and quietly disappears.
+    func testWorkLeftOverFromYesterdayIsListedAsOverdue() {
+        // It used to be folded into Today with nothing marking it, so a block
+        // from Monday read exactly like one from this morning.
         let result = sections([block("Missed", day: 4, from: 9, to: 10)])
-        XCTAssertEqual(result.first?.kind, .today)
+        XCTAssertEqual(result.first?.kind, .overdue)
         XCTAssertEqual(result.first?.items.map(\.todo.title), ["Missed"])
+    }
+
+    func testOverdueLeadsTheListAndTodayKeepsWhatIsStillAhead() {
+        let result = sections([
+            block("Yesterday", day: 4, from: 9, to: 10),
+            block("Ran out this morning", day: 5, from: 8, to: 9),
+            block("Still ahead", day: 5, from: 14, to: 15)
+        ])
+        XCTAssertEqual(result.map(\.kind), [.overdue, .today])
+        XCTAssertEqual(
+            result[0].items.map(\.todo.title),
+            ["Yesterday", "Ran out this morning"]
+        )
+        XCTAssertEqual(result[1].items.map(\.todo.title), ["Still ahead"])
+    }
+
+    func testWorkUnderwayRightNowIsNotOverdue() {
+        // now is 10:00, so this block still has an hour to run.
+        let result = sections([block("Running", day: 5, from: 9, to: 11)])
+        XCTAssertEqual(result.map(\.kind), [.today])
+    }
+
+    func testAnAllDayTaskDueTodayIsNotYetOverdue() {
+        // It has no moment to be late against until the day is over.
+        let result = sections([], [allDay("Due today", day: 5)])
+        XCTAssertEqual(result.map(\.kind), [.today])
+    }
+
+    func testAnAllDayTaskFromAnEarlierDayIsOverdue() {
+        let result = sections([], [allDay("Due Monday", day: 3)])
+        XCTAssertEqual(result.map(\.kind), [.overdue])
+    }
+
+    func testDaysLateCountsWholeDaysAndIsZeroForToday() {
+        let items = AgendaBuilder.items(
+            blocks: [
+                block("Two days ago", day: 3, from: 9, to: 10),
+                block("Earlier today", day: 5, from: 8, to: 9)
+            ],
+            allDay: [],
+            calendar: calendar
+        )
+        XCTAssertEqual(items[0].daysLate(now, calendar: calendar), 2)
+        XCTAssertEqual(items[1].daysLate(now, calendar: calendar), 0)
     }
 
     func testBeyondTheHorizonIsNotListed() {
@@ -88,13 +135,13 @@ final class AgendaTests: XCTestCase {
         let result = sections(
             [
                 block("Afternoon", day: 5, from: 14, to: 15),
-                block("Morning", day: 5, from: 9, to: 10)
+                block("Late morning", day: 5, from: 11, to: 12)
             ],
             [allDay("Due today", day: 5)]
         )
         XCTAssertEqual(
             result[0].items.map(\.todo.title),
-            ["Due today", "Morning", "Afternoon"]
+            ["Due today", "Late morning", "Afternoon"]
         )
     }
 
@@ -181,6 +228,61 @@ final class AgendaTests: XCTestCase {
         // part of the day's open list.
         let result = focus([], [allDay("Due", day: 5)])
         guard case .overdue = result else { return XCTFail("got \(result)") }
+    }
+
+    // MARK: - What the status item counts
+
+    @MainActor
+    private func model(_ items: [AgendaItem]) throws -> AppModel {
+        let model = AppModel(database: try AppDatabase.inMemory())
+        model.agendaItems = items
+        return model
+    }
+
+    private var yesterdayAndAhead: [AgendaItem] {
+        AgendaBuilder.items(
+            blocks: [
+                block("Yesterday", day: 4, from: 9, to: 10),
+                block("Still ahead", day: 5, from: 14, to: 15)
+            ],
+            allDay: [],
+            calendar: calendar
+        )
+    }
+
+    @MainActor
+    func testTheBadgeCountsOverdueWhileTheSectionIsShown() throws {
+        let model = try model(yesterdayAndAhead)
+        XCTAssertEqual(
+            model.todayRemainingCount(includingOverdue: true, now: now, calendar: calendar),
+            2
+        )
+    }
+
+    @MainActor
+    func testCollapsingOverdueTakesItOutOfTheBadgeToo() throws {
+        // Putting the section away has to put its number away, or the badge
+        // goes on reporting exactly what you just chose not to look at.
+        let model = try model(yesterdayAndAhead)
+        XCTAssertEqual(
+            model.todayRemainingCount(includingOverdue: false, now: now, calendar: calendar),
+            1
+        )
+    }
+
+    @MainActor
+    func testTheBadgeEmptiesWhenEverythingLeftIsOverdueAndCollapsed() throws {
+        let model = try model(
+            AgendaBuilder.items(
+                blocks: [block("Yesterday", day: 4, from: 9, to: 10)],
+                allDay: [],
+                calendar: calendar
+            )
+        )
+        XCTAssertEqual(
+            model.todayRemainingCount(includingOverdue: false, now: now, calendar: calendar),
+            0
+        )
     }
 
     func testPassedAndUnderwayFlags() {

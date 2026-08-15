@@ -21,6 +21,7 @@ final class Preferences {
         snapMinutes = defaults.integer(forKey: Key.snapMinutes, default: 15)
         storedHourHeight = min(200, max(24, defaults.double(forKey: Key.hourHeight, default: 48)))
         hiddenCalendarIDs = Set(defaults.stringArray(forKey: Key.hiddenCalendars) ?? [])
+        showsOverdue = defaults.bool(forKey: Key.showsOverdue, default: true)
         backgroundStyle = BackgroundStyle(
             rawValue: defaults.string(forKey: Key.backgroundStyle) ?? ""
         ) ?? .solid
@@ -64,6 +65,16 @@ final class Preferences {
     }
 
     private var storedHourHeight: Double
+
+    // MARK: - Menu bar
+
+    /// Whether overdue work is listed in the menu bar agenda, and counted by
+    /// the status item.
+    ///
+    /// One flag for both on purpose: collapsing the section means "not now",
+    /// and a badge that goes on reporting a number you have just put away is
+    /// the nagging the collapse was for.
+    var showsOverdue: Bool { didSet { defaults.set(showsOverdue, forKey: Key.showsOverdue) } }
 
     // MARK: - Appearance
 
@@ -142,6 +153,9 @@ final class Preferences {
         static let snapMinutes = "snapMinutes"
         static let hourHeight = "hourHeight"
         static let hiddenCalendars = "hiddenCalendarIDs"
+        // The key the menu bar's own `@AppStorage` used, so anyone who has
+        // already collapsed the section keeps it collapsed.
+        static let showsOverdue = "menuBarShowsOverdue"
         static let backgroundStyle = "backgroundStyle"
         static let backgroundOpacity = "backgroundOpacity"
         static let appearance = "appAppearance"

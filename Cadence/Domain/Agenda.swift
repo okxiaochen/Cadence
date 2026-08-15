@@ -23,11 +23,30 @@ struct AgendaItem: Identifiable, Hashable {
         guard let interval else { return false }
         return interval.contains(now)
     }
+
+    /// Time has run out on this and it is still open — either it belongs to a
+    /// day before today, or its block ended earlier today.
+    ///
+    /// An all-day task due today is deliberately not overdue: it has no moment
+    /// to be late against until the day itself is over.
+    func isOverdue(_ now: Date, calendar: Calendar = .current) -> Bool {
+        guard !todo.isCompleted else { return false }
+        if day < calendar.startOfDay(for: now) { return true }
+        return hasPassed(now)
+    }
+
+    /// Whole days between the day this belongs to and today; 0 for something
+    /// that only fell behind earlier today.
+    func daysLate(_ now: Date, calendar: Calendar = .current) -> Int {
+        let startOfToday = calendar.startOfDay(for: now)
+        guard day < startOfToday else { return 0 }
+        return calendar.dateComponents([.day], from: day, to: startOfToday).day ?? 0
+    }
 }
 
 struct AgendaSection: Identifiable, Hashable {
     enum Kind: String {
-        case today, tomorrow, upcoming
+        case overdue, today, tomorrow, upcoming
     }
 
     var kind: Kind
@@ -68,13 +87,19 @@ enum AgendaBuilder {
               let horizon = calendar.date(byAdding: .day, value: upcomingDays, to: startOfToday)
         else { return [] }
 
-        // Anything still open from before today is shown with today's work —
-        // hiding it in a section nobody expands is how things get missed.
-        let today = items.filter { $0.day < startOfTomorrow }
+        // Work that has run out of time leads the list in its own section,
+        // rather than being mixed into today's where nothing distinguishes it.
+        // The risk of a section is that it gets collapsed and forgotten, so it
+        // sits above today rather than below it and keeps its count visible
+        // when closed — see `MenuBarView.sectionHeader`.
+        let untilTomorrow = items.filter { $0.day < startOfTomorrow }
+        let overdue = untilTomorrow.filter { $0.isOverdue(now, calendar: calendar) }
+        let today = untilTomorrow.filter { !$0.isOverdue(now, calendar: calendar) }
         let tomorrow = items.filter { $0.day >= startOfTomorrow && $0.day < startOfDayAfter }
         let upcoming = items.filter { $0.day >= startOfDayAfter && $0.day < horizon }
 
         return [
+            AgendaSection(kind: .overdue, title: "Overdue", items: overdue),
             AgendaSection(kind: .today, title: "Today", items: today),
             AgendaSection(kind: .tomorrow, title: "Tomorrow", items: tomorrow),
             AgendaSection(kind: .upcoming, title: "Upcoming", items: upcoming)

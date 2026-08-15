@@ -69,6 +69,67 @@ final class StoreTests: XCTestCase {
         }
     }
 
+    // MARK: - What the agenda is allowed to see
+
+    /// The agenda's window used to start at today, so a block from an earlier
+    /// day was never fetched and the Overdue section stayed empty no matter
+    /// what the grouping did. The window now has no lower bound.
+    func testTheAgendaWindowReachesBackToOlderOpenWork() throws {
+        let stale = try insert("Six weeks late")
+        try database.writer.write { db in
+            try TodoRepository.insertBlock(db, TimeBlock(
+                taskID: stale.id,
+                startAt: now.addingTimeInterval(-42 * 86_400),
+                endAt: now.addingTimeInterval(-42 * 86_400 + 3600)
+            ))
+        }
+        let blocks = try database.writer.read { db in
+            try TodoRepository.scheduledBlocks(
+                db,
+                in: DateInterval(start: .distantPast, end: now.addingTimeInterval(86_400)),
+                openOnly: true
+            )
+        }
+        XCTAssertEqual(blocks.map(\.todo.title), ["Six weeks late"])
+    }
+
+    /// `openOnly` is what keeps that unbounded window affordable: it has to
+    /// leave finished work in the past behind.
+    func testOpenOnlyLeavesFinishedWorkOutOfTheAgendaWindow() throws {
+        let done = try insert("Long since done", status: .done)
+        let cancelled = try insert("Abandoned", status: .cancelled)
+        let open = try insert("Still open")
+        try database.writer.write { db in
+            for todo in [done, cancelled, open] {
+                try TodoRepository.insertBlock(db, TimeBlock(
+                    taskID: todo.id,
+                    startAt: now.addingTimeInterval(-30 * 86_400),
+                    endAt: now.addingTimeInterval(-30 * 86_400 + 3600)
+                ))
+            }
+        }
+        let range = DateInterval(start: .distantPast, end: now.addingTimeInterval(86_400))
+        try database.writer.read { db in
+            XCTAssertEqual(
+                try TodoRepository.scheduledBlocks(db, in: range, openOnly: true).map(\.todo.title),
+                ["Still open"]
+            )
+            // The default is unchanged, so the calendar still shows what happened.
+            XCTAssertEqual(try TodoRepository.scheduledBlocks(db, in: range).count, 3)
+        }
+    }
+
+    func testAnAllDayTaskDueLongAgoIsStillFetched() throws {
+        try insert("Due in July", dueAt: now.addingTimeInterval(-40 * 86_400))
+        let details = try database.writer.read { db in
+            try TodoRepository.allDay(
+                db,
+                in: DateInterval(start: .distantPast, end: now.addingTimeInterval(86_400))
+            )
+        }
+        XCTAssertEqual(details.map(\.todo.title), ["Due in July"])
+    }
+
     // MARK: - Smart lists
 
     func testStalledHoldsUndatedWorkNothingHasHappenedOnForAFortnight() throws {

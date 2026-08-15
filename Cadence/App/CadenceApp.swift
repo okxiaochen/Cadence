@@ -115,7 +115,7 @@ struct CadenceApp: App {
             // changes every few minutes shoves every other status item sideways.
             // Two digits is a bounded, and therefore tolerable, amount of drift.
             Image(systemName: model.menuBarSymbol)
-            Text(model.menuBarLabel)
+            Text(model.menuBarLabel(includingOverdue: preferences.showsOverdue))
         }
         .menuBarExtraStyle(.window)
 

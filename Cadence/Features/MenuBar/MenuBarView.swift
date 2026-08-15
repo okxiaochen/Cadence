@@ -4,9 +4,14 @@ import SwiftUI
 /// Today, Tomorrow and Upcoming.
 struct MenuBarView: View {
     @Environment(AppModel.self) private var model
+    @Environment(Preferences.self) private var preferences
     @Environment(\.openWindow) private var openWindow
 
     @State private var newTask = ""
+
+    /// Lives on `Preferences` rather than in an `@AppStorage` here: the status
+    /// item's count reads it too, and it has to redraw the moment it changes.
+    private var showsOverdue: Bool { preferences.showsOverdue }
 
     private var now: Date { model.clock }
     private var sections: [AgendaSection] { model.agendaSections(now: now) }
@@ -16,38 +21,92 @@ struct MenuBarView: View {
             runningBar
             header
             Divider()
+            agenda
+            Divider()
+            footer
+        }
+        // One constant size for every state, never the content's own height.
+        // The popover window grows to fit its content but does not shrink back,
+        // so any variant shorter than the tallest one — no running timer, a
+        // one-line header instead of "Up next" — left the leftover window
+        // transparent and the desktop showed through above and below.
+        //
+        // Everything above and below the agenda therefore has to be fixed, and
+        // the agenda absorbs the difference. `.frame` proposes a size rather
+        // than enforcing one, so the clip is what actually holds the bound.
+        .frame(width: 320, height: 420)
+        .clipped()
+    }
 
+    private var agenda: some View {
+        Group {
             if sections.isEmpty {
                 empty
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(sections) { section in
-                            Text(section.title)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 12)
-                                .padding(.top, 8)
-                                .padding(.bottom, 3)
+                            sectionHeader(section)
 
-                            ForEach(section.items) { item in
-                                AgendaRow(item: item, now: now)
+                            if section.kind != .overdue || showsOverdue {
+                                ForEach(section.items) { item in
+                                    AgendaRow(
+                                        item: item,
+                                        now: now,
+                                        daysLate: section.kind == .overdue
+                                            ? item.daysLate(now) : 0
+                                    )
+                                }
                             }
                         }
                     }
                     .padding(.bottom, 6)
                 }
-                // A fixed height, not a maximum: the popover window sizes
-                // itself to its content, so a flexible child makes the two
-                // measure each other in a loop.
-                .frame(height: 320)
             }
-
-            Divider()
-            footer
         }
-        .frame(width: 320)
+        .frame(maxHeight: .infinity)
+    }
+
+    /// Overdue is the only section that collapses, and it keeps its count in
+    /// the header when closed: a section you can hide has to go on saying how
+    /// much is behind it, or hiding it is how the work gets forgotten.
+    @ViewBuilder
+    private func sectionHeader(_ section: AgendaSection) -> some View {
+        if section.kind == .overdue {
+            Button {
+                preferences.showsOverdue.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Text(section.title)
+                    Text("\(section.items.count)")
+                        .monospacedDigit()
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(.orange.opacity(0.18), in: Capsule())
+                    Spacer(minLength: 0)
+                    Image(systemName: showsOverdue ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(showsOverdue
+                  ? "Hide overdue work, and stop counting it in the menu bar"
+                  : "Show overdue work")
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 3)
+        } else {
+            Text(section.title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 3)
+        }
     }
 
     // MARK: - Header
@@ -57,20 +116,27 @@ struct MenuBarView: View {
     @ViewBuilder
     private var runningBar: some View {
         if !model.runningEntries.isEmpty {
-            VStack(spacing: 6) {
-                ForEach(model.runningEntries) { entry in
-                    runningRow(entry)
-                }
-                if model.runningEntries.count > 1 {
-                    HStack {
-                        Spacer()
-                        Button("Stop All") { model.stopAllTimers() }
-                            .buttonStyle(.quiet)
+            // Scrolls past two timers rather than growing: the window is a
+            // fixed height, so anything that grows here comes straight out of
+            // the agenda below.
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(model.runningEntries) { entry in
+                        runningRow(entry)
+                    }
+                    if model.runningEntries.count > 1 {
+                        HStack {
+                            Spacer()
+                            Button("Stop All") { model.stopAllTimers() }
+                                .buttonStyle(.quiet)
+                        }
                     }
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .frame(maxHeight: 108)
+            .fixedSize(horizontal: false, vertical: true)
             Divider()
         }
     }
@@ -224,6 +290,8 @@ private struct AgendaRow: View {
 
     var item: AgendaItem
     var now: Date
+    /// 0 unless this is listed under Overdue and belongs to an earlier day.
+    var daysLate: Int = 0
 
     @State private var isHovering = false
 
@@ -245,6 +313,13 @@ private struct AgendaRow: View {
                     .foregroundStyle(item.hasPassed(now) ? .secondary : .primary)
 
                 HStack(spacing: 5) {
+                    // Leads the line: a carried-over block otherwise shows a
+                    // bare "10:00–10:30" that reads exactly like today's.
+                    if daysLate > 0 {
+                        Text(daysLate == 1 ? "1 day late" : "\(daysLate) days late")
+                            .fontWeight(.medium)
+                            .foregroundStyle(.orange)
+                    }
                     if let interval = item.interval {
                         Text("\(Format.time(interval.start))–\(Format.time(interval.end))")
                             .monospacedDigit()
