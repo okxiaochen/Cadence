@@ -425,6 +425,7 @@ final class AgentSession {
         - Call explain last, with a one-paragraph summary and any warnings.
         - Be concise. Do not narrate your tool use.
         \(workItemRules)
+        \(Self.externalWorkRules)
 
         Memory:
         - The notes below are what you already know. Use them when planning.
@@ -476,23 +477,59 @@ final class AgentSession {
     static func workItemRules(enabled: Bool) -> String {
         guard enabled else { return "" }
         return """
-
-        Work items:
-        - list_work_items is what their team is tracking. Read it before planning
-          a day or a week: most of what this person is committed to is there, not
-          in the list they remembered to type here.
-        - Overdue first — call it with action "overdue" before "todo".
-        - Check alreadyInCadence. Propose creating only the ones that are missing,
-          and pass externalID straight through, or the next sync makes a second
-          copy of work that is already on their plate.
-        - A work item title names a symptom; a task names an action. "User cannot
-          log-in" is a ticket. "Reproduce the login failure" is a task. Write the
-          task the way they would have written it, and keep the ticket's words in
-          the notes rather than the title.
-        - Most carry no dates at all. That is not missing information — deciding
-          when they happen is the whole job.
+        - list_work_items is the connected task platform. Call it with action
+          "overdue" before "todo".
+        - Check alreadyInCadence, and pass externalID straight through on
+          anything you propose creating.
         """
     }
+
+    /// How to think about work that lives somewhere else — which is most of it,
+    /// for most people.
+    ///
+    /// Always present, including when nothing is connected, and that is the
+    /// point. A model that believes Cadence holds the whole picture reports an
+    /// empty evening as a free one, to someone with forty tickets open
+    /// elsewhere. Knowing the picture is partial changes what it is honest to
+    /// say long before there is a tool to fix it.
+    ///
+    /// Deliberately about *kinds* of source rather than named platforms. There
+    /// are too many — Jira, Asana, Linear, Slack, Notion — and one integration
+    /// per platform does not scale. What generalises is the judgement: what a
+    /// queue is, what a ticket title is worth, and that whatever is worked out
+    /// about a source has to be written down rather than worked out again.
+    static let externalWorkRules = """
+
+        Where the work comes from:
+        - Cadence holds what this person typed into it. That is rarely all of
+          it. Work also arrives as tickets on a task platform, as documents
+          those tickets link to, and as messages nobody has dealt with yet.
+        - So "nothing scheduled" means nothing is scheduled *here*. It does not
+          mean the day is free, and reporting it as though it did is how a
+          planner stops being trusted. Say which you mean.
+        - You will see tools for the sources that are connected. Where there is
+          no tool there is no source: do not guess at what might be in one.
+
+        Reading a source that is connected:
+        - Read it before planning a day or a week, not after.
+        - What comes back is a queue, not a plan. Judge it before copying any of
+          it across: finished items, things already here, and a platform's own
+          onboarding content all look like work and are not.
+        - A ticket title names a symptom; a task title names an action. "User
+          cannot log-in" is a report. "Reproduce the login failure" is a task.
+          Write it the way they would have, and keep the original wording in the
+          notes rather than the title.
+        - Carry the source's own id through, so reading it again revises what is
+          here instead of duplicating it.
+        - Most external items carry no dates. That is not missing information —
+          deciding when they happen is the job.
+
+        Keeping what you work out:
+        - When you learn how one of these sources behaves — which call returns
+          the open items, what its output actually means, where it misleads —
+          write it down with save_skill. A run that has to work it out again has
+          spent your time and theirs on something already known once.
+        """
 
     /// Each run is a fresh process, so continuity has to be handed over
     /// explicitly. Labelled as *earlier* turns so the model answers the new

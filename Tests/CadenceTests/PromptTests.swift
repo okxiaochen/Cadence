@@ -63,6 +63,60 @@ final class PromptTests: XCTestCase {
         XCTAssertTrue(rules.contains("alreadyInCadence"), rules)
     }
 
+    // MARK: - Work that lives somewhere else
+    //
+    // One integration per platform does not scale — Jira, Asana, Linear, Slack,
+    // Notion — so what ships is the judgement, not the connectors.
+
+    func testTheFrameworkIsPresentEvenWithNothingConnected() throws {
+        // The point of it: a model that thinks Cadence holds the whole picture
+        // reports an empty evening as a free one to someone with forty tickets
+        // open elsewhere.
+        let prompt = try session().systemPrompt(for: .chat)
+        XCTAssertTrue(prompt.contains("Where the work comes from"), prompt)
+        XCTAssertTrue(prompt.contains("nothing is scheduled *here*"), prompt)
+    }
+
+    func testTheFrameworkNamesNoPlatform() {
+        // Naming one is how this stops generalising. The categories carry it.
+        let rules = AgentSession.externalWorkRules
+        for platform in ["Meegle", "Jira", "Slack", "Asana", "Linear", "Notion", "Lark"] {
+            XCTAssertFalse(rules.contains(platform), "the framework names \(platform)")
+        }
+    }
+
+    func testTheFrameworkForbidsGuessingAtSourcesWithNoTool() {
+        // The failure this whole session kept avoiding: describing a capability
+        // the model does not have makes it spend the turn failing to use it.
+        let rules = AgentSession.externalWorkRules
+        XCTAssertTrue(rules.contains("no tool there is no source"), rules)
+    }
+
+    func testTheFrameworkSaysToWriteDownWhatItWorksOut() {
+        XCTAssertTrue(AgentSession.externalWorkRules.contains("save_skill"))
+    }
+
+    /// The discipline held all session: never describe a tool the model has not
+    /// been given. `propose_run_command` does not exist yet, so the framework
+    /// must not send anyone looking for it.
+    func testTheFrameworkPromisesNoToolThatDoesNotExistYet() throws {
+        let catalog = ToolCatalog(
+            database: try AppDatabase.inMemory(),
+            buffer: ProposalBuffer(),
+            context: PlanningContext(
+                workdayStartHour: 9, workdayEndHour: 18, includesWeekends: false,
+                defaultEstimateMinutes: 30, snapMinutes: 15, busy: []
+            )
+        )
+        let names = Set(catalog.tools().map(\.name))
+        for token in AgentSession.externalWorkRules
+            .split(whereSeparator: { !$0.isLetter && $0 != "_" }) {
+            let word = String(token)
+            guard word.contains("_"), word.lowercased() == word else { continue }
+            XCTAssertTrue(names.contains(word), "the framework names “\(word)”, which is not a tool")
+        }
+    }
+
     // MARK: - The nightly plan's bargain
 
     /// The ban on inventing work stands; what lifts is the ban on writing down
