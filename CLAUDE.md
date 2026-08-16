@@ -192,11 +192,27 @@ Two rules the timer learned the hard way:
   back to when the Mac went to sleep, or caps it at 8h, and says so in the
   entry's own note. Without it an overnight timer records a working day.
 
-## What cannot be verified from here
+## Checking how it looks
 
-Screen recording is unavailable, so **drag-and-drop and general appearance have
-never been confirmed visually**. Geometry and model behaviour are covered by
-tests; how it looks and feels is not. Say so rather than implying otherwise.
+`screencapture` works. Appearance **can** be verified from here, and claiming
+otherwise wasted several rounds of the user's attention before anyone tried it.
+
+```sh
+B=$(osascript -e 'tell application "System Events" to tell process "Cadence" \
+      to get {position, size} of window 1' | tr -d ' ')
+screencapture -x -t png -R"$B" shot.png
+```
+
+Capture **that rectangle, never the whole screen** — a full-screen grab takes
+whatever else the user has open with it.
+
+**Measure pixels; do not look and decide.** A scrollbar fix was once read as
+working off the rendered image and was not: the numbers were identical to the
+broken build, byte for byte. Sample the columns and compare. `PIL` is available.
+
+Two things still cannot be checked this way: **drag-and-drop**, which needs
+input events, and anything about feel rather than appearance. Say so rather
+than implying otherwise.
 
 `LiveCLITests` run against the real `claude` CLI and spend the user's tokens —
 opt in with `TEST_RUNNER_CADENCE_LIVE_CLI=1` and only when it earns it.

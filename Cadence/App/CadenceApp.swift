@@ -30,6 +30,25 @@ struct CadenceApp: App {
     }
 
     init() {
+        // Overlay scrollers rather than the legacy kind with a slot.
+        //
+        // `NSScroller` draws that slot itself, opaque and near-white, so no
+        // amount of hiding a scroll view's background reaches it — and over a
+        // window you can see through it reads as a bright bar laid on the blur.
+        // Which style you get otherwise depends on the input device: a trackpad
+        // gets overlay, a mouse gets legacy.
+        //
+        // Setting `scrollerStyle` on each `NSScrollView` was tried first and
+        // does not hold. The property reads back as overlay and the layout
+        // stays legacy, because SwiftUI reassigns it from the system preference
+        // afterwards. This changes what the system preference *is* for this
+        // process, so there is nothing to be reassigned from.
+        //
+        // Registered rather than set: the registration domain sits below the
+        // user's own, so somebody who has explicitly asked for scrollbars that
+        // are always visible still gets them. Ours is only the default.
+        UserDefaults.standard.register(defaults: ["AppleShowScrollBars": "WhenScrolling"])
+
         let database: AppDatabase
         var failure: String?
         do {
