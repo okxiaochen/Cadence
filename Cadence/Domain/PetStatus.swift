@@ -16,11 +16,34 @@ struct PetStatus: Equatable {
     var timingMinutes: Int?
     var breakAdvice: BreakAdvice
 
+    /// Today, as one list.
+    ///
+    /// Tasks and calendar events interleaved rather than kept apart, because
+    /// the question being asked is "what is my day", and a day does not come in
+    /// two columns. Which one a line came from is a property of the line, not a
+    /// reason to split the list.
+    var today: [Line] = []
+
     struct Event: Equatable {
         var title: String
         var start: Date
         /// Whole minutes from now until it starts; negative once it has begun.
         var minutesAway: Int
+    }
+
+    struct Line: Identifiable, Equatable {
+        enum Kind: Equatable { case task, event }
+
+        var id: String
+        var kind: Kind
+        var title: String
+        /// Nil for something with a day but no time.
+        var at: Date?
+        var isDone: Bool = false
+        /// How late it is, in whole days. 0 for anything not overdue.
+        var daysLate: Int = 0
+        /// Sorting key: timed things in time order, all-day work first.
+        var sortAt: Date
     }
 
     /// How the companion should look, which is the only thing it says without

@@ -12,22 +12,25 @@ import SwiftUI
 /// Nearly the opposite of `QuickCaptureController`'s panel, which is titled,
 /// transient and hides the moment it loses focus. This one has no title, joins
 /// every Space, and stays.
+/// A borderless panel cannot become key, and a panel that cannot become key
+/// cannot be typed into. Overriding it is what lets the companion take a line
+/// of text; `.nonactivatingPanel` is what stops taking it from also yanking the
+/// whole app in front of whatever you were working in.
+private final class PetPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
 @MainActor
 final class PetWindowController: NSObject, NSWindowDelegate {
 
     private var panel: NSPanel?
     private let model: AppModel
     private let preferences: Preferences
-    /// Handed in rather than reached for: quick capture owns its own panel, and
-    /// two controllers each holding a global reference to the other is how a
-    /// retain cycle starts.
-    private let onCapture: () -> Void
     private var clockTask: Task<Void, Never>?
 
-    init(model: AppModel, preferences: Preferences, onCapture: @escaping () -> Void) {
+    init(model: AppModel, preferences: Preferences) {
         self.model = model
         self.preferences = preferences
-        self.onCapture = onCapture
         super.init()
     }
 
@@ -74,8 +77,8 @@ final class PetWindowController: NSObject, NSWindowDelegate {
     // MARK: - The panel
 
     private func makePanel() -> NSPanel {
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 280, height: 220),
+        let panel = PetPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 420),
             // `.nonactivatingPanel` is what lets it be clicked without pulling
             // focus off whatever you were typing in.
             styleMask: [.borderless, .nonactivatingPanel],
@@ -112,8 +115,14 @@ final class PetWindowController: NSObject, NSWindowDelegate {
                 NSApp.activate(ignoringOtherApps: true)
                 self?.openMainWindow()
             },
-            onCapture: onCapture,
-            onToggleTimer: { [weak self] in self?.toggleTimer() }
+            onToggleTimer: { [weak self] in self?.toggleTimer() },
+            onToggleDone: { [weak self] id in
+                self?.model.toggleCompleted(id)
+                self?.refresh()
+            },
+            onSubmit: { [weak self] text in
+                self?.capture(text) ?? false
+            }
         )
         let hosting = NSHostingView(rootView: view)
         hosting.autoresizingMask = [.width, .height]
@@ -139,6 +148,23 @@ final class PetWindowController: NSObject, NSWindowDelegate {
         } else {
             NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
         }
+    }
+
+    /// Same parser the quick-capture panel uses, so `#tag !2 ~45m tomorrow`
+    /// means the same thing typed at the companion as typed anywhere else.
+    private func capture(_ text: String) -> Bool {
+        let parsed = CaptureParser.parse(text)
+        guard !parsed.isEmpty else { return false }
+        model.createTodo(
+            title: parsed.title,
+            tagNames: parsed.tagNames,
+            priority: parsed.priority,
+            estimateMinutes: parsed.estimateMinutes,
+            dueAt: parsed.dueAt,
+            scheduledAt: parsed.scheduledAt
+        )
+        refresh()
+        return true
     }
 
     private func toggleTimer() {

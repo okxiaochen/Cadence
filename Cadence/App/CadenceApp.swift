@@ -70,11 +70,8 @@ struct CadenceApp: App {
 
         let model = AppModel(database: database)
         _model = State(initialValue: model)
-        let capture = QuickCaptureController(model: model)
-        _quickCapture = State(initialValue: capture)
-        _pet = State(initialValue: PetWindowController(
-            model: model, preferences: .shared, onCapture: { capture.toggle() }
-        ))
+        _quickCapture = State(initialValue: QuickCaptureController(model: model))
+        _pet = State(initialValue: PetWindowController(model: model, preferences: .shared))
 
         _updater = State(initialValue: Updater(database: database))
         _notifications = State(initialValue: NotificationService(model: model))

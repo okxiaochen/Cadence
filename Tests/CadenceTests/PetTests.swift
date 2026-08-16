@@ -138,6 +138,93 @@ final class PetTests: XCTestCase {
         XCTAssertEqual(status().headline, "Nothing scheduled.")
     }
 
+    // MARK: - The day as one list
+    //
+    // The first version answered "how many" when the question was "what". These
+    // pin down the list it answers with now.
+
+    @MainActor
+    private func model() throws -> AppModel {
+        AppModel(database: try AppDatabase.inMemory())
+    }
+
+    private func day(_ hour: Int, _ minute: Int = 0) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return calendar.date(from: DateComponents(
+            year: 2026, month: 8, day: 17, hour: hour, minute: minute
+        ))!
+    }
+
+    @MainActor
+    func testTasksAndEventsShareOneListInTimeOrder() throws {
+        let model = try model()
+        model.agendaItems = [
+            block("Deep work", from: day(14)),
+            block("Standup prep", from: day(9, 30))
+        ]
+        let lines = model.todayLines(now: day(8))
+        // Events cannot be injected without EventKit, so this covers the task
+        // half and the ordering rule they share.
+        XCTAssertEqual(lines.map(\.title), ["Standup prep", "Deep work"])
+        XCTAssertTrue(lines.allSatisfy { $0.kind == .task })
+    }
+
+    @MainActor
+    func testUntimedWorkLeadsTheDayRatherThanLandingAtMidnight() throws {
+        let model = try model()
+        model.agendaItems = [
+            block("At two", from: day(14)),
+            allDay("Due today", on: day(0))
+        ]
+        XCTAssertEqual(model.todayLines(now: day(8)).map(\.title), ["Due today", "At two"])
+    }
+
+    @MainActor
+    func testWorkLeftOverFromEarlierDaysIsStillTodaysProblem() throws {
+        let model = try model()
+        model.agendaItems = [block("From Monday", from: day(9).addingTimeInterval(-3 * 86_400))]
+        let lines = model.todayLines(now: day(10))
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertEqual(lines.first?.daysLate, 3)
+    }
+
+    @MainActor
+    func testFinishedWorkIsNotOnTheList() throws {
+        let model = try model()
+        var done = block("Done", from: day(9))
+        done.todo.status = .done
+        model.agendaItems = [done, block("Not done", from: day(11))]
+        XCTAssertEqual(model.todayLines(now: day(8)).map(\.title), ["Not done"])
+    }
+
+    @MainActor
+    func testTheListIsCappedSoThePanelStaysAPanel() throws {
+        let model = try model()
+        model.agendaItems = (0..<40).map { block("Task \($0)", from: day(9).addingTimeInterval(Double($0) * 60)) }
+        XCTAssertEqual(model.todayLines(now: day(8), limit: 12).count, 12)
+    }
+
+    private func block(_ title: String, from start: Date) -> AgendaItem {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return AgendaItem(
+            todo: Todo(title: title),
+            interval: DateInterval(start: start, duration: 3600),
+            day: calendar.startOfDay(for: start)
+        )
+    }
+
+    private func allDay(_ title: String, on start: Date) -> AgendaItem {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return AgendaItem(
+            todo: Todo(title: title),
+            interval: nil,
+            day: calendar.startOfDay(for: start)
+        )
+    }
+
     // MARK: - The face
 
     func testTheMoodShowsTheMostUrgentThing() {
