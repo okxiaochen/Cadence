@@ -221,6 +221,108 @@ final class CommandGateTests: XCTestCase {
         XCTAssertNotNil(reviewed.first?.rejection)
     }
 
+    // MARK: - Allowing, then running
+
+    @MainActor
+    private func applying(_ changes: [ProposedChange]) throws -> Int {
+        let model = AppModel(database: database)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        model.undoManager = undo
+        var proposal = Proposal(runID: "run")
+        proposal.changes = try database.writer.read { db in
+            try ProposalValidator.review(
+                changes, db: db,
+                environment: ProposalValidator.Environment(now: Date(), busy: [])
+            )
+        }
+        undo.beginUndoGrouping()
+        defer { undo.endUndoGrouping() }
+        return model.apply(proposal)
+    }
+
+    /// The loop the whole feature is: asked for, allowed, then usable without
+    /// asking again.
+    @MainActor
+    func testOnceAllowedTheSameShapeNoLongerAsks() throws {
+        let arguments = ["auth", "status", "--format", "json"]
+        let first = try call("run_command", [
+            "connector": "meegle", "command": "meegle",
+            "arguments": arguments, "purpose": "check login"
+        ])
+        XCTAssertEqual(first["awaitingApproval"] as? Bool, true)
+
+        XCTAssertEqual(try applying(buffer.drain().changes), 1)
+
+        try database.writer.read { db in
+            XCTAssertNotNil(try ApprovedCommandRepository.matching(
+                db, command: "meegle", arguments: arguments
+            ), "allowing it must make the shape recognised")
+        }
+    }
+
+    /// Approving is what the review is for; the gate must not take its word for
+    /// it. A permission validated only on its way to the screen is validated in
+    /// the wrong place.
+    @MainActor
+    func testApplyingRefusesWhatTheGateRefusesEvenIfItReachedTheProposal() throws {
+        let sneaky = ApprovedCommand(
+            connector: "x", command: "sh", arguments: ["-c", "rm -rf ~"], purpose: ""
+        )
+        var proposal = Proposal(runID: "run")
+        // Bypassing review entirely, as a compromised or buggy caller would.
+        proposal.changes = [ReviewedChange(change: .approveCommand(sneaky), summary: "x")]
+
+        let model = AppModel(database: database)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        model.undoManager = undo
+        undo.beginUndoGrouping()
+        _ = model.apply(proposal)
+        undo.endUndoGrouping()
+
+        try database.writer.read { db in
+            XCTAssertTrue(
+                try ApprovedCommandRepository.all(db).isEmpty,
+                "a shell must not become allowed by reaching apply"
+            )
+        }
+    }
+
+    func testRevokingOneCommandLeavesTheOthers() throws {
+        try database.writer.write { db in
+            try ApprovedCommandRepository.approve(db, ApprovedCommand(
+                connector: "slack", command: "slack-cli", arguments: ["a"], purpose: ""
+            ))
+            try ApprovedCommandRepository.approve(db, ApprovedCommand(
+                connector: "slack", command: "slack-cli", arguments: ["b"], purpose: ""
+            ))
+        }
+        let first = try database.writer.read { db in
+            try ApprovedCommandRepository.all(db).first!
+        }
+        try database.writer.write { db in
+            XCTAssertTrue(try ApprovedCommandRepository.revoke(db, id: first.id))
+        }
+        try database.writer.read { db in
+            XCTAssertEqual(try ApprovedCommandRepository.all(db).count, 1)
+        }
+    }
+
+    func testARevokedCommandHasToBeAllowedAgain() throws {
+        let arguments = ["conversations", "list"]
+        try database.writer.write { db in
+            try ApprovedCommandRepository.approve(db, ApprovedCommand(
+                connector: "slack", command: "slack-cli", arguments: arguments, purpose: ""
+            ))
+            _ = try ApprovedCommandRepository.revoke(db, connector: "slack")
+        }
+        let result = try call("run_command", [
+            "connector": "slack", "command": "slack-cli", "arguments": arguments
+        ])
+        XCTAssertEqual(result["awaitingApproval"] as? Bool, true, "revoking must actually revoke")
+    }
+
     func testListAllowedCommandsReportsThePlaceholders() throws {
         try database.writer.write { db in
             try ApprovedCommandRepository.approve(db, ApprovedCommand(

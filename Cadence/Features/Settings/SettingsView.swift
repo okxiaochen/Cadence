@@ -195,10 +195,19 @@ private struct AISettings: View {
     @Environment(ExternalAgentService.self) private var externalAgents
     @Environment(ScheduledRuns.self) private var scheduledRuns
     @Environment(Preferences.self) private var preferences
+    @Environment(AppModel.self) private var model
 
     @State private var testResult: String?
     @State private var isTesting = false
     @State private var copiedSetup = false
+    @State private var allowedCommands: [ApprovedCommand] = []
+
+    /// Grouped so a tool can be revoked whole. Revoking half of one leaves the
+    /// assistant able to read some of it, which is a state nobody chose.
+    private var connectors: [String] {
+        var seen = Set<String>()
+        return allowedCommands.map(\.connector).filter { seen.insert($0).inserted }
+    }
 
     /// Resolved on each render rather than cached: the CLI can be installed, or
     /// its short-lived token can expire, while this window is open.
@@ -251,6 +260,32 @@ private struct AISettings: View {
                      + "turning them into tasks still goes through review.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            Section("Allowed commands") {
+                if allowedCommands.isEmpty {
+                    Text("None yet. To read a tool Cadence has no built-in support "
+                         + "for, the assistant has to ask first — you will see the "
+                         + "exact command here before it runs, and it can never ask "
+                         + "for a shell.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(connectors, id: \.self) { connector in
+                        LabeledContent(connector) {
+                            Button("Revoke all") { revoke(connector: connector) }
+                                .controlSize(.small)
+                        }
+                        ForEach(allowedCommands.filter { $0.connector == connector }) { command in
+                            AllowedCommandRow(command: command) { revoke(command) }
+                        }
+                    }
+
+                    Text("Each line is the exact shape that was allowed. Anything "
+                         + "different — one more argument, a different subcommand — "
+                         + "has to be allowed again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Section("Other tools") {
                 Toggle("Let other tools connect over MCP", isOn: $externalAgents.isEnabled)
@@ -403,7 +438,75 @@ private struct AISettings: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { session.checkConfiguration() }
+        .onAppear {
+            session.checkConfiguration()
+            reloadAllowedCommands()
+        }
+    }
+
+    private func reloadAllowedCommands() {
+        allowedCommands = (try? model.database.writer.read { db in
+            try ApprovedCommandRepository.all(db)
+        }) ?? []
+    }
+
+    private func revoke(_ command: ApprovedCommand) {
+        try? model.database.writer.write { db in
+            _ = try ApprovedCommandRepository.revoke(db, id: command.id)
+        }
+        reloadAllowedCommands()
+    }
+
+    private func revoke(connector: String) {
+        try? model.database.writer.write { db in
+            _ = try ApprovedCommandRepository.revoke(db, connector: connector)
+        }
+        reloadAllowedCommands()
+    }
+}
+
+/// One allowed command, shown as the shape that was approved.
+///
+/// Monospaced and unwrapped-looking on purpose: this is the thing the user
+/// agreed to, and a prose summary of it would be the assistant's word for what
+/// it does rather than what it is.
+private struct AllowedCommandRow: View {
+    var command: ApprovedCommand
+    var onRevoke: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(command.display())
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 5) {
+                    if !command.purpose.isEmpty {
+                        Text(command.purpose)
+                    }
+                    if let used = command.lastUsedAt {
+                        Text("· last run \(Format.date(used))")
+                    } else {
+                        Text("· never run")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            Button("Revoke", role: .destructive, action: onRevoke)
+                .controlSize(.small)
+                .opacity(isHovering ? 1 : 0.35)
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
     }
 }
 
