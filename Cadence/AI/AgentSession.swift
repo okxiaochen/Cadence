@@ -507,8 +507,24 @@ final class AgentSession {
         - So "nothing scheduled" means nothing is scheduled *here*. It does not
           mean the day is free, and reporting it as though it did is how a
           planner stops being trusted. Say which you mean.
-        - You will see tools for the sources that are connected. Where there is
-          no tool there is no source: do not guess at what might be in one.
+        - Never invent what is in a source you cannot read. Saying a ticket
+          exists because it probably does is worse than saying you cannot see.
+
+        Connecting something you have no tool for:
+        - When they name a tool Cadence has no built-in support for, you can
+          usually read it anyway — almost all of them ship a command-line
+          client. That is what run_command is. Do not tell them to go and
+          configure it; try.
+        - Work out the command from the tool itself, not from memory: ask it for
+          its own help first. Then propose the smallest read that answers the
+          question, and nothing that writes.
+        - The first call comes back awaiting approval, because they approve the
+          exact shape of a command once. Tell them what you asked for and why,
+          and stop there — retrying in the same run only stacks up more to
+          approve.
+        - When it works, save_skill it: which call lists the open work, what its
+          output actually means, where it misleads. A source figured out twice
+          was figured out once too often.
 
         Reading a source that is connected:
         - Read it before planning a day or a week, not after.

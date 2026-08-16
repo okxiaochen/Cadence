@@ -89,11 +89,25 @@ final class PromptTests: XCTestCase {
         // The failure this whole session kept avoiding: describing a capability
         // the model does not have makes it spend the turn failing to use it.
         let rules = AgentSession.externalWorkRules
-        XCTAssertTrue(rules.contains("no tool there is no source"), rules)
+        XCTAssertTrue(rules.contains("Never invent what is in a source"), rules)
     }
 
     func testTheFrameworkSaysToWriteDownWhatItWorksOut() {
         XCTAssertTrue(AgentSession.externalWorkRules.contains("save_skill"))
+    }
+
+    /// Found by running it. The first version said "where there is no tool
+    /// there is no source", written when nothing could connect one — and it
+    /// duly stopped the model from trying once something could. Asked to
+    /// connect GitHub it answered that adding a data source was the user's job.
+    func testTheFrameworkSendsTheModelToConnectRatherThanToRefuse() {
+        let rules = AgentSession.externalWorkRules
+        XCTAssertTrue(rules.contains("run_command"), rules)
+        XCTAssertTrue(rules.contains("Do not tell them to go and"), rules)
+    }
+
+    func testTheFrameworkSaysToAskTheToolBeforeGuessingItsFlags() {
+        XCTAssertTrue(AgentSession.externalWorkRules.contains("its own help"))
     }
 
     /// The discipline held all session: never describe a tool the model has not
