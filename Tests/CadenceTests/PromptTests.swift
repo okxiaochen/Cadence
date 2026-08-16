@@ -90,6 +90,84 @@ final class PromptTests: XCTestCase {
         XCTAssertTrue(prompt.contains("say which"), prompt)
     }
 
+    // MARK: - The whole of what the assistant is told
+
+    private func session() throws -> AgentSession {
+        AgentSession(model: AppModel(database: try AppDatabase.inMemory()))
+    }
+
+    func testTheSystemPromptCarriesTheRulesThatCannotBeInferredFromASchema() throws {
+        let prompt = try session().systemPrompt(for: .chat)
+        // A block that disagrees with its estimate gets silently resolved into
+        // something nobody chose.
+        XCTAssertTrue(prompt.contains("estimate IS the length of its block"), prompt)
+        XCTAssertTrue(prompt.contains("get_estimate_history"), prompt)
+        XCTAssertTrue(prompt.contains("find_free_slots"), prompt)
+    }
+
+    /// The gap that made half the provenance work idle: `source` was in the
+    /// schema and nowhere in the prompt, so everything defaulted to the one
+    /// source that never expires.
+    func testTheSystemPromptExplainsWhatSourceIsFor() throws {
+        let prompt = try session().systemPrompt(for: .chat)
+        XCTAssertTrue(prompt.contains("`source`"), prompt)
+        XCTAssertTrue(prompt.contains("inferred"), prompt)
+        XCTAssertTrue(prompt.contains("UNVERIFIED"), prompt)
+    }
+
+    /// Dumps the real prompt for eyeballing. Not an assertion — the point is to
+    /// be able to read what actually ships without launching the app.
+    func testDumpSystemPrompt() throws {
+        let prompt = try session().systemPrompt(for: .nightly)
+        if let path = ProcessInfo.processInfo.environment["CADENCE_DUMP_PROMPT"] {
+            try prompt.write(toFile: path, atomically: true, encoding: .utf8)
+        }
+        XCTAssertFalse(prompt.isEmpty)
+    }
+
+    // MARK: - When the nightly plan is worth running
+    //
+    // Found by running it: on a Saturday evening it plans Sunday, and with
+    // weekends excluded there is nowhere to put anything — a model call spent
+    // on a card that says it could do nothing, two nights in seven.
+
+    private func runs() throws -> ScheduledRuns {
+        let model = AppModel(database: try AppDatabase.inMemory())
+        return ScheduledRuns(model: model, session: AgentSession(model: model))
+    }
+
+    /// 2026-08-15 is a Saturday, 17th a Monday.
+    private func evening(_ day: Int) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: day, hour: 22)
+        )!
+    }
+
+    func testTheNightlyPlanSkipsTheEveOfANonWorkingDay() throws {
+        let scheduled = try runs()
+        scheduled.nightlyPlanEnabled = true
+        XCTAssertFalse(scheduled.isNightlyDue(now: evening(15), worksTomorrow: false))
+    }
+
+    func testTheNightlyPlanRunsOnTheEveOfAWorkingDay() throws {
+        let scheduled = try runs()
+        scheduled.nightlyPlanEnabled = true
+        XCTAssertTrue(scheduled.isNightlyDue(now: evening(16), worksTomorrow: true))
+    }
+
+    func testTheNightlyPlanStillWaitsForItsHour() throws {
+        let scheduled = try runs()
+        scheduled.nightlyPlanEnabled = true
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let lunchtime = calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 16, hour: 12)
+        )!
+        XCTAssertFalse(scheduled.isNightlyDue(now: lunchtime, worksTomorrow: true))
+    }
+
     // MARK: - Memory provenance
 
     func testTheReflectionWorksThroughStaleMemories() {

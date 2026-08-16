@@ -392,7 +392,9 @@ final class AgentSession {
         .map { "mcp__cadence__\($0.name)" }
     }
 
-    private func systemPrompt(for surface: AISurface, history: String = "") -> String {
+    /// Internal rather than private so it can be asserted on: this is the whole
+    /// of what the assistant is told, and it ships to every user.
+    func systemPrompt(for surface: AISurface, history: String = "") -> String {
         let context = model.planningContext()
         let now = Date()
         let formatter = DateFormatter()

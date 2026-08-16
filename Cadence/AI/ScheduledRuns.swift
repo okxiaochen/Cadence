@@ -111,8 +111,25 @@ final class ScheduledRuns {
         }
     }
 
-    func isNightlyDue(now: Date = Date(), calendar: Calendar = .current) -> Bool {
+    /// Due after the chosen hour, once a day — and **not on the eve of a day
+    /// the user does not work**.
+    ///
+    /// Found by running the thing: on a Saturday evening it plans Sunday, and
+    /// with weekends excluded `find_free_slots` has nowhere to put anything, so
+    /// the run costs a model call and produces a card that says it could do
+    /// nothing. Two nights in seven, every week. Planning the next working day
+    /// instead was the other option and is worse: a plan made on Friday for
+    /// Monday is three days stale by the time it is read.
+    func isNightlyDue(
+        now: Date = Date(),
+        calendar: Calendar = .current,
+        worksTomorrow: Bool? = nil
+    ) -> Bool {
         guard calendar.component(.hour, from: now) >= nightlyHour else { return false }
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) else { return false }
+        let isWorkingDay = worksTomorrow
+            ?? (Preferences.shared.workingHours(on: tomorrow, calendar: calendar) != nil)
+        guard isWorkingDay else { return false }
         guard let last = lastNightlyRun else { return true }
         return !calendar.isDate(last, inSameDayAs: now)
     }
