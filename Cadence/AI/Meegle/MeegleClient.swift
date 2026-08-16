@@ -23,8 +23,7 @@ final class MeegleClient: @unchecked Sendable {
     static let maxPages = 20
     static let defaultTimeoutSeconds = 30
 
-    private let invocation: CLIInvocation
-    private let timeoutSeconds: Int
+    private let process: CLIProcess?
     /// Injected in tests so the parsing and paging can be exercised without a
     /// login, a network, or the CLI being installed.
     private let execute: (@Sendable ([String]) throws -> Data)?
@@ -32,17 +31,16 @@ final class MeegleClient: @unchecked Sendable {
     /// Fails when `meegle` is not on the user's path — including the paths that
     /// only exist inside their shell's rc files, which `CLILocator` handles.
     init(timeoutSeconds: Int = MeegleClient.defaultTimeoutSeconds) throws {
-        guard let invocation = try? CLILocator.invocation(for: "meegle") else {
+        do {
+            self.process = try CLIProcess(command: "meegle", timeoutSeconds: timeoutSeconds)
+        } catch {
             throw MeegleError.notInstalled
         }
-        self.invocation = invocation
-        self.timeoutSeconds = timeoutSeconds
         self.execute = nil
     }
 
     init(execute: @escaping @Sendable ([String]) throws -> Data) {
-        self.invocation = .executable(URL(fileURLWithPath: "/usr/bin/false"))
-        self.timeoutSeconds = MeegleClient.defaultTimeoutSeconds
+        self.process = nil
         self.execute = execute
     }
 
@@ -94,102 +92,28 @@ final class MeegleClient: @unchecked Sendable {
 
     private func run(_ arguments: [String]) throws -> Data {
         if let execute { return try execute(arguments) }
-
-        let process = Process()
-        switch invocation {
-        case .executable(let url):
-            process.executableURL = url
-            process.arguments = arguments
-
-        case .loginShell(let command, let shell):
-            // Same treatment the AI CLI gets: the command bare so an alias
-            // still expands, every argument quoted, the whole line under `eval`
-            // because zsh parses `-c` before the rc files have defined
-            // anything. See AI-INTEGRATION.md §7.
-            let line = ([command] + arguments.map(CLILocator.shellQuoted))
-                .joined(separator: " ")
-            process.executableURL = shell
-            process.arguments = ["-ilc", "eval \(CLILocator.shellQuoted(line))"]
+        guard let process else { throw MeegleError.notInstalled }
+        do {
+            return try process.run(arguments, named: "meegle")
+        } catch let failure as CLIProcess.Failure {
+            throw Self.translate(failure)
         }
+    }
 
-        // A GUI app's environment has no rc file behind it, so the CLI would
-        // not find its own node runtime.
-        var environment = ProcessInfo.processInfo.environment
-            .merging(LoginEnvironment.variables) { _, fromShell in fromShell }
-        var seen = Set<String>()
-        environment["PATH"] = (LoginEnvironment.searchPaths
-            + (environment["PATH"]?.split(separator: ":").map(String.init) ?? [])
-            + CLILocator.searchPaths)
-            .filter { !$0.isEmpty && seen.insert($0).inserted }
-            .joined(separator: ":")
-        process.environment = environment
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        do { try process.run() } catch {
-            throw MeegleError.failed(error.localizedDescription)
-        }
-
-        // Both pipes are drained on their own queues *before* waiting. Reading
-        // after `waitUntilExit` deadlocks as soon as the output outgrows the
-        // pipe buffer, and a full page of work items comfortably does.
-        let out = DataCollector()
-        let err = DataCollector()
-        let group = DispatchGroup()
-        for (pipe, sink) in [(outPipe, out), (errPipe, err)] {
-            group.enter()
-            DispatchQueue.global(qos: .userInitiated).async {
-                sink.append(pipe.fileHandleForReading.readDataToEndOfFile())
-                group.leave()
-            }
-        }
-
-        let timedOut = Flag()
-        let watchdog = DispatchWorkItem { [weak process] in
-            timedOut.set()
-            process?.terminate()
-        }
-        DispatchQueue.global().asyncAfter(
-            deadline: .now() + .seconds(timeoutSeconds), execute: watchdog
-        )
-
-        process.waitUntilExit()
-        group.wait()
-        watchdog.cancel()
-
-        if timedOut.value { throw MeegleError.timedOut(seconds: timeoutSeconds) }
-
-        guard process.terminationStatus == 0 else {
-            let message = String(data: err.data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            // The CLI reports this on stderr in prose; turning it into the
-            // typed case is what lets the tool tell the model to say "log in"
-            // rather than surfacing a raw failure.
+    /// The CLI reports "not logged in" on stderr in prose. Turning it into the
+    /// typed case is what lets the tool tell the model to say "log in" rather
+    /// than surfacing a raw failure the user cannot act on.
+    private static func translate(_ failure: CLIProcess.Failure) -> MeegleError {
+        switch failure {
+        case .notInstalled: return .notInstalled
+        case .timedOut(_, let seconds): return .timedOut(seconds: seconds)
+        case .failed(_, let message):
             if message.localizedCaseInsensitiveContains("auth")
                 || message.localizedCaseInsensitiveContains("login") {
-                throw MeegleError.notAuthenticated
+                return .notAuthenticated
             }
-            throw MeegleError.failed(message.isEmpty ? "exit \(process.terminationStatus)" : message)
+            return .failed(message)
         }
-        return out.data
     }
 }
 
-private final class DataCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage = Data()
-
-    var data: Data { lock.lock(); defer { lock.unlock() }; return storage }
-    func append(_ chunk: Data) { lock.lock(); storage.append(chunk); lock.unlock() }
-}
-
-private final class Flag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage = false
-
-    var value: Bool { lock.lock(); defer { lock.unlock() }; return storage }
-    func set() { lock.lock(); storage = true; lock.unlock() }
-}
