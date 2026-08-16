@@ -136,6 +136,16 @@ extension AppModel {
                     todo.sortOrder = try TodoRepository.nextSortOrder(db, parentID: draft.parentID)
                     try TodoRepository.insert(db, todo, tagIDs: tagIDs)
 
+                case .approveCommand(let approved):
+                    // Checked again here rather than trusted from review: the
+                    // gate is the point of the feature, and a permission that
+                    // is only validated on the way to the screen is validated
+                    // in the wrong place.
+                    try CommandGate.check(
+                        command: approved.command, arguments: approved.arguments
+                    )
+                    try ApprovedCommandRepository.approve(db, approved)
+
                 case .updateTask(let id, let patch):
                     guard var todo = try TodoRepository.fetch(db, id: id) else { continue }
                     if let title = patch.title { todo.title = title }

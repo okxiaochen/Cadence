@@ -42,6 +42,11 @@ enum ProposedChange: Identifiable, Hashable {
     case createBlock(id: String, taskID: String, interval: DateInterval)
     case moveBlock(id: String, interval: DateInterval)
     case deleteBlock(id: String)
+    /// Permission to run one shape of one command, so the assistant can read a
+    /// tool Cadence has no integration for. Reviewed like everything else, and
+    /// unlike everything else it is not a change to the user's data — it is a
+    /// change to what Cadence may do next time.
+    case approveCommand(ApprovedCommand)
 
     var id: String {
         switch self {
@@ -50,6 +55,7 @@ enum ProposedChange: Identifiable, Hashable {
         case .createBlock(let id, _, _): "create-block-\(id)"
         case .moveBlock(let id, _): "move-block-\(id)"
         case .deleteBlock(let id): "delete-block-\(id)"
+        case .approveCommand(let approved): "approve-command-\(approved.id)"
         }
     }
 
@@ -60,13 +66,14 @@ enum ProposedChange: Identifiable, Hashable {
         case .updateTask(let id, _): [id]
         case .createBlock(_, let taskID, _): [taskID]
         case .moveBlock, .deleteBlock: []   // resolved from the database at apply time
+        case .approveCommand: []
         }
     }
 
     var isScheduling: Bool {
         switch self {
         case .createBlock, .moveBlock, .deleteBlock: true
-        case .createTask, .updateTask: false
+        case .createTask, .updateTask, .approveCommand: false
         }
     }
 
@@ -207,6 +214,27 @@ enum ProposalValidator {
                 summary = todo?.title ?? "Unknown block"
                 detail = block.map { describe(DateInterval(start: $0.startAt, end: $0.endAt)) }
                 if block == nil { rejection = "Block no longer exists" }
+
+            case .approveCommand(let approved):
+                // The whole command line, spelled out. What is being approved
+                // is the shape, so the shape is what has to be legible — a
+                // summary of its intent would be the assistant's word for it.
+                summary = "Run \(approved.display())"
+                detail = approved.purpose.isEmpty
+                    ? "Allows \(approved.connector)"
+                    : "\(approved.purpose) · connector: \(approved.connector)"
+                do {
+                    try CommandGate.check(
+                        command: approved.command, arguments: approved.arguments
+                    )
+                    if try ApprovedCommandRepository.matching(
+                        db, command: approved.command, arguments: approved.arguments
+                    ) != nil {
+                        rejection = "Already allowed"
+                    }
+                } catch let refusal as CommandGate.Refusal {
+                    rejection = refusal.errorDescription
+                }
             }
 
             reviewed.append(ReviewedChange(

@@ -325,6 +325,28 @@ final class AppDatabase {
                 """)
         }
 
+        // M13: commands the user has agreed Cadence may run to read their own
+        // tools.
+        //
+        // Its own table rather than a field on `skill` on purpose. A skill is
+        // prose the assistant may rewrite at will; this is a permission, and
+        // the two must not share a write path — otherwise a model that can
+        // revise a procedure can widen what it is allowed to run.
+        migrator.registerMigration("v13_approved_command") { db in
+            try db.execute(sql: """
+                CREATE TABLE approved_command (
+                  id            TEXT PRIMARY KEY,
+                  connector     TEXT NOT NULL,
+                  command       TEXT NOT NULL,
+                  argumentsJSON TEXT NOT NULL,
+                  purpose       TEXT NOT NULL DEFAULT '',
+                  approvedAt    TEXT NOT NULL,
+                  lastUsedAt    TEXT
+                );
+                CREATE INDEX idx_approved_connector ON approved_command(connector);
+                """)
+        }
+
         return migrator
     }
 }
