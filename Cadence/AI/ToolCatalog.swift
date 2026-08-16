@@ -365,6 +365,29 @@ final class ToolCatalog: @unchecked Sendable {
                 inputSchema: object([:])
             ),
             MCPTool(
+                name: "list_skills",
+                description: "Every procedure that exists, with where it came from "
+                    + "and when it was last checked. The outline above already tells "
+                    + "you what to reach for day to day — this is for tidying up: "
+                    + "finding what has gone stale, spotting two that say the same "
+                    + "thing, seeing what ships with Cadence versus what was learned "
+                    + "here.",
+                inputSchema: object([
+                    "staleOnly": boolean("Only ones nobody has confirmed lately"),
+                    "afterDays": integer("How stale counts as stale (default 14)"),
+                    "limit": integer("How many to return (default 50)")
+                ])
+            ),
+            MCPTool(
+                name: "confirm_skill",
+                description: "Mark a procedure as still working, without rewriting "
+                    + "it. Use when you have checked and the steps hold — restating "
+                    + "them would risk garbling something that was already right.",
+                inputSchema: object([
+                    "key": string("Skill key")
+                ], required: ["key"])
+            ),
+            MCPTool(
                 name: "get_skill",
                 description: "The steps for one of the procedures listed under "
                     + "\"How things are done here\". Read it BEFORE doing the thing "
@@ -443,6 +466,8 @@ final class ToolCatalog: @unchecked Sendable {
         case "confirm_memory": return try confirmMemory(arguments)
         case "run_command": return try runCommand(arguments)
         case "list_allowed_commands": return try listAllowedCommands()
+        case "list_skills": return try listSkills(arguments)
+        case "confirm_skill": return try confirmSkill(arguments)
         case "get_skill": return try getSkill(arguments)
         case "save_skill": return try saveSkill(arguments)
         case "forget_skill": return try forgetSkill(arguments)
@@ -1019,6 +1044,64 @@ final class ToolCatalog: @unchecked Sendable {
     }
 
     // MARK: - Skills
+
+    private func listSkills(_ args: [String: Any]) throws -> Any {
+        let days = args.int("afterDays") ?? Memory.staleAfterDays
+        let limit = min(200, max(1, args.int("limit") ?? 50))
+        let now = Date()
+        let builtIn = SkillPack.bundled()
+
+        let (skills, forked) = try database.writer.read { db in
+            (
+                args.bool("staleOnly") == true
+                    ? try SkillRepository.stale(db, asOf: now, after: days, limit: limit)
+                    : Array(try SkillRepository.all(db, builtIn: builtIn).prefix(limit)),
+                Set(try SkillRepository.forkedFromBuiltIn(db, builtIn: builtIn).map(\.id))
+            )
+        }
+
+        return [
+            "count": skills.count,
+            "builtInVersion": builtIn.version,
+            "skills": skills.map { skill -> [String: Any] in
+                var row: [String: Any] = [
+                    "key": skill.id,
+                    "title": skill.title,
+                    "whenToUse": skill.whenToUse,
+                    "source": skill.source,
+                    "builtIn": skill.isBuiltIn,
+                    "stale": skill.isStale(asOf: now, after: days)
+                ]
+                if let elapsed = skill.daysSinceVerified(asOf: now) {
+                    row["daysSinceVerified"] = elapsed
+                }
+                // Worth surfacing: the user's edit still wins, but a shipped
+                // improvement they have not seen is a reason to look.
+                if forked.contains(skill.id) {
+                    row["shippedVersionHasMovedOn"] = true
+                }
+                return row
+            },
+            "note": "get_skill(\"<key>\") for the steps. Built-in procedures update "
+                + "with Cadence and cannot go stale here."
+        ]
+    }
+
+    private func confirmSkill(_ args: [String: Any]) throws -> Any {
+        guard let key = args.string("key") else { throw ToolError.missingArgument("key") }
+        let slug = Self.slug(key)
+        let confirmed = try database.writer.write { db in
+            try SkillRepository.confirm(db, id: slug)
+        }
+        return [
+            "confirmed": confirmed,
+            "key": slug,
+            "note": confirmed
+                ? "Marked as still working; the staleness clock restarts."
+                : "No stored procedure with that key. Built-in ones are refreshed "
+                    + "by updating Cadence, not from here."
+        ]
+    }
 
     private func getSkill(_ args: [String: Any]) throws -> Any {
         guard let key = args.string("key") else { throw ToolError.missingArgument("key") }

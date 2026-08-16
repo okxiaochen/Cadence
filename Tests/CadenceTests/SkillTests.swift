@@ -191,6 +191,94 @@ final class SkillTests: XCTestCase {
         XCTAssertEqual(read["builtIn"] as? Bool, true)
     }
 
+    // MARK: - Going stale
+    //
+    // A procedure that has quietly stopped working is worse than none, because
+    // it will be followed.
+
+    private func store(_ key: String, source: String, verifiedAt: Date?) throws {
+        var skill = Skill(id: key, title: key, whenToUse: "when \(key)", body: "steps")
+        skill.source = source
+        try database.writer.write { db in
+            try SkillRepository.upsert(db, skill, builtIn: .empty)
+        }
+        if let verifiedAt {
+            try database.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE skill SET verifiedAt = ? WHERE id = ?",
+                    arguments: [verifiedAt, key]
+                )
+            }
+        }
+    }
+
+    private func daysAgo(_ days: Int) -> Date {
+        Date().addingTimeInterval(-Double(days) * 86_400)
+    }
+
+    /// A shipped procedure is refreshed by updating the app, not by anyone
+    /// confirming it here.
+    func testABuiltInNeverGoesStale() throws {
+        let builtIn = pack(1, ["a"]).asSkills().first!
+        XCTAssertFalse(builtIn.canGoStale)
+        XCTAssertFalse(builtIn.isStale())
+        XCTAssertNil(builtIn.daysSinceVerified())
+    }
+
+    func testWhatTheUserDictatedNeverGoesStale() throws {
+        try store("theirs", source: Skill.Source.user, verifiedAt: daysAgo(400))
+        XCTAssertFalse(try XCTUnwrap(all(.empty).first).isStale())
+    }
+
+    func testSomethingWorkedOutGoesStale() throws {
+        try store("worked-out", source: Skill.Source.inferred, verifiedAt: daysAgo(30))
+        let skill = try XCTUnwrap(all(.empty).first)
+        XCTAssertTrue(skill.isStale())
+        XCTAssertEqual(skill.daysSinceVerified(), 30)
+    }
+
+    func testListSkillsWithStaleOnlyLeavesTheRestAlone() throws {
+        try store("said-so", source: Skill.Source.user, verifiedAt: daysAgo(400))
+        try store("worked-out", source: Skill.Source.inferred, verifiedAt: daysAgo(400))
+        let result = try call("list_skills", ["staleOnly": true])
+        let keys = (result["skills"] as? [[String: Any]] ?? []).compactMap { $0["key"] as? String }
+        XCTAssertEqual(keys, ["worked-out"])
+    }
+
+    func testListSkillsWithoutStaleOnlyIncludesTheBuiltIns() throws {
+        // Against the real bundle: the tidy-up view has to show what ships too,
+        // or "what do I have" answers only half the question.
+        let result = try call("list_skills", [:])
+        let rows = result["skills"] as? [[String: Any]] ?? []
+        XCTAssertTrue(rows.contains { $0["builtIn"] as? Bool == true })
+        XCTAssertEqual(result["builtInVersion"] as? Int, SkillPack.bundled().version)
+    }
+
+    func testConfirmingRestartsTheClockWithoutTouchingTheSteps() throws {
+        try store("worked-out", source: Skill.Source.inferred, verifiedAt: daysAgo(90))
+        XCTAssertEqual(try call("confirm_skill", ["key": "worked-out"])["confirmed"] as? Bool, true)
+        let skill = try XCTUnwrap(all(.empty).first)
+        XCTAssertFalse(skill.isStale())
+        XCTAssertEqual(skill.body, "steps", "confirming must not rewrite them")
+    }
+
+    func testConfirmingABuiltInSaysWhyItCannot() throws {
+        let result = try call("confirm_skill", ["key": "meegle-work-items"])
+        XCTAssertEqual(result["confirmed"] as? Bool, false)
+        XCTAssertTrue(
+            (result["note"] as? String ?? "").contains("updating Cadence"),
+            "the reason has to be legible, not just a false"
+        )
+    }
+
+    func testRewritingAlsoRestartsTheClock() throws {
+        try store("worked-out", source: Skill.Source.inferred, verifiedAt: daysAgo(90))
+        try call("save_skill", [
+            "key": "worked-out", "title": "T", "whenToUse": "w", "body": "new steps"
+        ])
+        XCTAssertFalse(try XCTUnwrap(all(.empty).first).isStale())
+    }
+
     // MARK: - What reaches the prompt
 
     func testTheOutlineCarriesWhenToUseAndNotTheSteps() throws {

@@ -53,10 +53,16 @@ struct Skill: Identifiable, Codable, Hashable, FetchableRecord, PersistableRecor
     /// memories do.
     var canGoStale: Bool { source != Source.builtIn && source != Source.user }
 
+    /// Days since anyone confirmed these steps, for the procedures where that
+    /// means anything. Nil for a built-in or something the user dictated —
+    /// there is nothing to have checked them against.
+    func daysSinceVerified(asOf now: Date = Date(), calendar: Calendar = .current) -> Int? {
+        guard canGoStale else { return nil }
+        return calendar.dateComponents([.day], from: verifiedAt ?? updatedAt, to: now).day
+    }
+
     func isStale(asOf now: Date = Date(), after days: Int = Memory.staleAfterDays) -> Bool {
-        guard canGoStale else { return false }
-        let since = verifiedAt ?? updatedAt
-        let elapsed = Calendar.current.dateComponents([.day], from: since, to: now).day ?? 0
+        guard let elapsed = daysSinceVerified(asOf: now) else { return false }
         return elapsed >= days
     }
 }
@@ -184,6 +190,42 @@ enum SkillRepository {
             db, sql: "SELECT * FROM skill WHERE id = ?", arguments: [id]
         ) != nil else { return false }
         try db.execute(sql: "DELETE FROM skill WHERE id = ?", arguments: [id])
+        return true
+    }
+
+    /// Procedures worth re-checking, oldest first.
+    ///
+    /// Built-ins are absent by construction — they are not rows — and that is
+    /// right: a shipped procedure is refreshed by updating the app, not by
+    /// someone confirming it. What the user dictated is excluded in SQL for the
+    /// same reason memories are: there is nothing to check it against.
+    static func stale(
+        _ db: Database,
+        asOf now: Date = Date(),
+        after days: Int = Memory.staleAfterDays,
+        limit: Int = 10
+    ) throws -> [Skill] {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: now) ?? now
+        return try Skill.fetchAll(db, sql: """
+            SELECT * FROM skill
+            WHERE source NOT IN (?, ?)
+              AND COALESCE(verifiedAt, updatedAt) <= ?
+            ORDER BY COALESCE(verifiedAt, updatedAt)
+            LIMIT ?
+            """, arguments: [Skill.Source.user, Skill.Source.builtIn, cutoff, limit])
+    }
+
+    /// Says "these steps still work" without rewriting them. Restating a
+    /// procedure to confirm it risks garbling one that was already right, which
+    /// is the same reason `confirm_memory` exists.
+    @discardableResult
+    static func confirm(_ db: Database, id: String, now: Date = Date()) throws -> Bool {
+        guard try Skill.fetchOne(
+            db, sql: "SELECT * FROM skill WHERE id = ?", arguments: [id]
+        ) != nil else { return false }
+        try db.execute(
+            sql: "UPDATE skill SET verifiedAt = ? WHERE id = ?", arguments: [now, id]
+        )
         return true
     }
 

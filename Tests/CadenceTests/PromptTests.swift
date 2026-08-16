@@ -244,4 +244,14 @@ final class PromptTests: XCTestCase {
         XCTAssertTrue(prompt.contains("confirm_memory"), prompt)
         XCTAssertTrue(prompt.contains("inferred"), "it has to label what it worked out")
     }
+
+    /// Skills could go stale from the day they existed, but only memories were
+    /// ever revisited — so a procedure that had quietly stopped working would
+    /// have gone on being followed.
+    func testTheReflectionWorksThroughStaleSkillsToo() {
+        let prompt = ScheduledRuns.reflectionPrompt
+        XCTAssertTrue(prompt.contains("list_skills"), prompt)
+        XCTAssertTrue(prompt.contains("confirm_skill"), prompt)
+        XCTAssertTrue(prompt.contains("forget_skill"), prompt)
+    }
 }
