@@ -456,6 +456,8 @@ final class AgentSession {
 
         \(surface.instruction)
 
+        \(skillSection)
+
         \(memorySection)
         \(historySection(history))
         """
@@ -502,6 +504,15 @@ final class AgentSession {
         Earlier in this conversation (for context — do not redo this work):
         \(history)
         """
+    }
+
+    /// One line per skill, never the steps. A procedure is long enough that
+    /// loading them all speculatively would cost more than working one out
+    /// again; the outline exists so the model knows what it *could* look up.
+    private var skillSection: String {
+        (try? model.database.writer.read { db in
+            try SkillRepository.promptSection(db)
+        }) ?? ""
     }
 
     /// Pinned memories in full plus a one-line outline of the rest, so a growing

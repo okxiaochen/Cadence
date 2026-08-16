@@ -333,6 +333,45 @@ final class ToolCatalog: @unchecked Sendable {
                 ], required: ["key"])
             ),
             MCPTool(
+                name: "get_skill",
+                description: "The steps for one of the procedures listed under "
+                    + "\"How things are done here\". Read it BEFORE doing the thing "
+                    + "its line describes, not after — the point of a skill is that "
+                    + "you do not have to work the procedure out again.",
+                inputSchema: object([
+                    "key": string("Skill key from the outline")
+                ], required: ["key"])
+            ),
+            MCPTool(
+                name: "save_skill",
+                description: "Write down how something is done, so neither of us "
+                    + "has to work it out again.\n\n"
+                    + "A skill is a PROCEDURE, not a fact — facts go in remember. "
+                    + "Save one when you have just worked out a repeatable way of "
+                    + "doing something: which calls in which order, what to check "
+                    + "first, what goes wrong. Reuse an existing key to revise it.\n\n"
+                    + "whenToUse is the only part always loaded, so write it as the "
+                    + "condition under which someone should reach for this, not as a "
+                    + "description of what it contains.",
+                inputSchema: object([
+                    "key": string("Stable slug, e.g. meegle-work-items. Reuse to revise."),
+                    "title": string("Short name"),
+                    "whenToUse": string("One line: when should this be reached for?"),
+                    "body": string("The steps, in order, with what to watch out for"),
+                    "source": string("\"user\" if they told you the procedure, "
+                        + "\"inferred\" if you worked it out (the default)")
+                ], required: ["key", "title", "whenToUse", "body"])
+            ),
+            MCPTool(
+                name: "forget_skill",
+                description: "Delete a skill that is wrong or obsolete. If it was a "
+                    + "change to one that ships with Cadence, this restores the "
+                    + "shipped version rather than removing it.",
+                inputSchema: object([
+                    "key": string("Skill key")
+                ], required: ["key"])
+            ),
+            MCPTool(
                 name: "forget",
                 description: "Delete a memory that is no longer true and has no "
                     + "replacement. If it merely changed, call remember with the same key.",
@@ -370,6 +409,9 @@ final class ToolCatalog: @unchecked Sendable {
         case "remember": return try remember(arguments)
         case "list_stale_memories": return try listStaleMemories(arguments)
         case "confirm_memory": return try confirmMemory(arguments)
+        case "get_skill": return try getSkill(arguments)
+        case "save_skill": return try saveSkill(arguments)
+        case "forget_skill": return try forgetSkill(arguments)
         case "forget": return try forget(arguments)
         case "explain": return try explain(arguments)
         default: throw ToolError.unknownTool(name)
@@ -832,6 +874,83 @@ final class ToolCatalog: @unchecked Sendable {
             "note": revised
                 ? "Replaced the previous version of this memory."
                 : "Stored a new memory."
+        ]
+    }
+
+    // MARK: - Skills
+
+    private func getSkill(_ args: [String: Any]) throws -> Any {
+        guard let key = args.string("key") else { throw ToolError.missingArgument("key") }
+        let slug = Self.slug(key)
+        guard let skill = try database.writer.read({ db in
+            try SkillRepository.fetch(db, id: slug)
+        }) else {
+            return ["found": false, "key": slug]
+        }
+        // Recency is what keeps the outline showing what actually gets used.
+        // A built-in has no row to touch until someone overrides it.
+        try? database.writer.write { db in try SkillRepository.touch(db, id: slug) }
+
+        return [
+            "found": true,
+            "key": skill.id,
+            "title": skill.title,
+            "whenToUse": skill.whenToUse,
+            "steps": skill.body,
+            "source": skill.source,
+            "builtIn": skill.isBuiltIn
+        ]
+    }
+
+    private func saveSkill(_ args: [String: Any]) throws -> Any {
+        guard let key = args.string("key") else { throw ToolError.missingArgument("key") }
+        guard let title = args.string("title") else { throw ToolError.missingArgument("title") }
+        guard let whenToUse = args.string("whenToUse") else {
+            throw ToolError.missingArgument("whenToUse")
+        }
+        guard let body = args.string("body") else { throw ToolError.missingArgument("body") }
+
+        let slug = Self.slug(key)
+        guard !slug.isEmpty else {
+            throw ToolError.badArgument("key", "must contain letters or digits")
+        }
+
+        var skill = Skill(id: slug, title: title, whenToUse: whenToUse, body: body)
+        // A procedure the model worked out is inferred unless the user dictated
+        // it — same honesty the memory tools ask for, and it decides what gets
+        // questioned later.
+        skill.source = Self.slug(args.string("source") ?? Skill.Source.inferred)
+        if skill.source.isEmpty { skill.source = Skill.Source.inferred }
+
+        let builtIn = SkillPack.bundled()
+        let revised = try database.writer.write { db in
+            try SkillRepository.upsert(db, skill, builtIn: builtIn)
+        }
+        let overridesBuiltIn = builtIn.skills.contains { $0.id == slug }
+        return [
+            "saved": true,
+            "key": slug,
+            "revised": revised,
+            "note": overridesBuiltIn
+                ? "This replaces the version that ships with Cadence. "
+                    + "forget_skill restores it."
+                : (revised ? "Replaced the previous version." : "Stored a new skill.")
+        ]
+    }
+
+    private func forgetSkill(_ args: [String: Any]) throws -> Any {
+        guard let key = args.string("key") else { throw ToolError.missingArgument("key") }
+        let slug = Self.slug(key)
+        let removed = try database.writer.write { db in
+            try SkillRepository.delete(db, id: slug)
+        }
+        let restored = removed && SkillPack.bundled().skills.contains { $0.id == slug }
+        return [
+            "forgotten": removed,
+            "key": slug,
+            "note": restored
+                ? "Your version is gone; the one that ships with Cadence is back."
+                : (removed ? "Deleted." : "No skill with that key.")
         ]
     }
 

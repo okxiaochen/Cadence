@@ -299,6 +299,32 @@ final class AppDatabase {
             try db.execute(sql: "UPDATE memory SET verifiedAt = updatedAt")
         }
 
+        // M12: procedures, as against the facts in `memory`.
+        //
+        // The table holds only what the user or the assistant wrote. Built-in
+        // skills are read from the app bundle and never inserted here, which is
+        // what makes shipping a better version of one a no-op: there is no
+        // stored copy to reconcile with. A row with a built-in's key overrides
+        // it, and records the version it was written against so the fork can be
+        // noticed later without being overruled.
+        migrator.registerMigration("v12_skill") { db in
+            try db.execute(sql: """
+                CREATE TABLE skill (
+                  id                    TEXT PRIMARY KEY,
+                  title                 TEXT NOT NULL,
+                  whenToUse             TEXT NOT NULL,
+                  body                  TEXT NOT NULL DEFAULT '',
+                  source                TEXT NOT NULL DEFAULT 'user',
+                  createdAt             TEXT NOT NULL,
+                  updatedAt             TEXT NOT NULL,
+                  verifiedAt            TEXT,
+                  lastUsedAt            TEXT,
+                  basedOnBuiltInVersion INTEGER
+                );
+                CREATE INDEX idx_skill_recency ON skill(lastUsedAt, updatedAt);
+                """)
+        }
+
         return migrator
     }
 }

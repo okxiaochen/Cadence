@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "meegle-work-items",
+      "title": "Bringing a Meegle work item into Cadence",
+      "whenToUse": "Before turning anything from list_work_items into a Cadence task — the list needs judging before it is copied.",
+      "body": "list_work_items returns what Meegle has assigned to this person. It is a queue, not a plan, and most of it should not become a task.\n\nJudge the list before copying any of it:\n\n1. `alreadyInCadence: true` means a task already stands for it. Leave it alone. Creating another is the failure this whole path is designed around.\n2. A `state` of RESOLVED, CLOSED or similar means the item is finished even though it is still listed. Do not bring it across.\n3. A fresh Meegle space is seeded with onboarding cards — \"Welcome to Meegle\", \"Create a space\", \"Invite a team member\". They are documentation wearing the shape of work. If a space's whole list looks like a product tour, it probably is one; say so rather than importing it.\n4. What is left is real. Bring across only what matters in the period being planned, and say in `explain` which ones and why. Everything you import is something the user will later find in their list and have to place.\n\nWriting the task:\n\n- **A ticket title names a symptom; a task title names an action.** \"User cannot log-in\" is a report. \"Reproduce the login failure\" is a task. Write what the user would have written if they had typed it themselves.\n- Keep the ticket's own wording in `notes`, so the original is not lost in the rewrite.\n- Pass `externalID` through exactly as given. It is what makes a later sync revise this task instead of creating a second copy of it.\n- Do not invent an estimate. Call `get_estimate_history` first; if there is nothing comparable, propose a short block to scope the work rather than a long one to do it — a 30-minute block that ends in a real estimate beats a three-hour guess.\n\nDates:\n\nMost work items carry no schedule at all — the `schedule` object comes back with empty strings rather than nulls. That is not missing data. Meegle says what has to be done; deciding when is the reason Cadence exists. Use `find_free_slots`.\n\nIf a work item does have dates, treat them as the team's expectation rather than the user's own due date, and say so if the two disagree."
+    }
+  ]
+}
