@@ -45,6 +45,22 @@ private struct PlanningSettings: View {
                 Toggle("Include weekends", isOn: $preferences.includesWeekends)
             }
 
+            Section("Desktop companion") {
+                Toggle("Show on the desktop", isOn: $preferences.showsDesktopPet)
+
+                if preferences.showsDesktopPet {
+                    Picker("Suggest a break after", selection: $preferences.breakAfterMinutes) {
+                        ForEach([25, 40, 50, 60, 90], id: \.self) { Text("\($0)m").tag($0) }
+                    }
+                }
+
+                Text("A small window that stays on the desktop. Point at it for "
+                     + "today, or click it to open Cadence. It holds still when "
+                     + "nothing is happening — an animation that never stops "
+                     + "costs a fifth of a processor core, all day.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Menu bar") {
                 Toggle("Show the agenda in the menu bar", isOn: $showsMenuBarItem)
             }

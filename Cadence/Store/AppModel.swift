@@ -152,6 +152,10 @@ final class AppModel {
     private var clockTask: Task<Void, Never>?
     /// The day the agenda window was built for, so it can be rebuilt at midnight.
     var agendaAnchorDay: Date = Calendar.current.startOfDay(for: Date())
+    /// When the companion last mentioned taking a break. In memory rather than
+    /// stored: a cooldown is about not repeating yourself in one sitting, and
+    /// relaunching the app is a different sitting.
+    var lastBreakSuggestedAt: Date?
 
     init(database: AppDatabase) {
         self.database = database

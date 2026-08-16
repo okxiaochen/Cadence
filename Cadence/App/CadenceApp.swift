@@ -4,6 +4,7 @@ import SwiftUI
 struct CadenceApp: App {
     @State private var model: AppModel
     @State private var quickCapture: QuickCaptureController
+    @State private var pet: PetWindowController
     @State private var preferences = Preferences.shared
     @State private var session: AgentSession
     @State private var updater: Updater
@@ -69,7 +70,12 @@ struct CadenceApp: App {
 
         let model = AppModel(database: database)
         _model = State(initialValue: model)
-        _quickCapture = State(initialValue: QuickCaptureController(model: model))
+        let capture = QuickCaptureController(model: model)
+        _quickCapture = State(initialValue: capture)
+        _pet = State(initialValue: PetWindowController(
+            model: model, preferences: .shared, onCapture: { capture.toggle() }
+        ))
+
         _updater = State(initialValue: Updater(database: database))
         _notifications = State(initialValue: NotificationService(model: model))
         _externalAgents = State(initialValue: ExternalAgentService(model: model))
@@ -96,6 +102,7 @@ struct CadenceApp: App {
                     await updater.checkInBackground()
                     externalAgents.startIfEnabled()
                     scheduledRuns.start()
+                    pet.setVisible(preferences.showsDesktopPet)
                     GlobalHotkey.shared.register(.quickCapture) { [quickCapture] in
                         Task { @MainActor in quickCapture.toggle() }
                     }
@@ -107,6 +114,9 @@ struct CadenceApp: App {
                     ) { [model] in
                         Task { @MainActor in model.toggleTimerForFocusedTask() }
                     }
+                }
+                .onChange(of: preferences.showsDesktopPet) { _, shows in
+                    pet.setVisible(shows)
                 }
                 // `cadence://…` from a script, a launcher or a git hook.
                 .onOpenURL { url in

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -23,6 +24,8 @@ final class Preferences {
         hiddenCalendarIDs = Set(defaults.stringArray(forKey: Key.hiddenCalendars) ?? [])
         showsOverdue = defaults.bool(forKey: Key.showsOverdue, default: true)
         meegleEnabled = defaults.bool(forKey: Key.meegle, default: false)
+        showsDesktopPet = defaults.bool(forKey: Key.pet, default: false)
+        breakAfterMinutes = defaults.integer(forKey: Key.breakAfter, default: 50)
         backgroundStyle = BackgroundStyle(
             rawValue: defaults.string(forKey: Key.backgroundStyle) ?? ""
         ) ?? .solid
@@ -66,6 +69,30 @@ final class Preferences {
     }
 
     private var storedHourHeight: Double
+
+    // MARK: - Desktop companion
+
+    /// Off by default. A window that sits on the desktop whatever else you are
+    /// doing is a decision somebody makes, not one they discover.
+    var showsDesktopPet: Bool { didSet { defaults.set(showsDesktopPet, forKey: Key.pet) } }
+
+    /// Minutes at the clock before it suggests stopping.
+    var breakAfterMinutes: Int {
+        didSet { defaults.set(breakAfterMinutes, forKey: Key.breakAfter) }
+    }
+
+    /// Where it was last dragged to, so it stays where it was put.
+    var petWindowOrigin: NSPoint? {
+        get {
+            guard let stored = defaults.array(forKey: Key.petOrigin) as? [Double],
+                  stored.count == 2 else { return nil }
+            return NSPoint(x: stored[0], y: stored[1])
+        }
+        set {
+            guard let newValue else { return defaults.removeObject(forKey: Key.petOrigin) }
+            defaults.set([newValue.x, newValue.y], forKey: Key.petOrigin)
+        }
+    }
 
     // MARK: - Connectors
 
@@ -168,6 +195,9 @@ final class Preferences {
         // already collapsed the section keeps it collapsed.
         static let showsOverdue = "menuBarShowsOverdue"
         static let meegle = "meegleEnabled"
+        static let pet = "showsDesktopPet"
+        static let breakAfter = "breakAfterMinutes"
+        static let petOrigin = "petWindowOrigin"
         static let backgroundStyle = "backgroundStyle"
         static let backgroundOpacity = "backgroundOpacity"
         static let appearance = "appAppearance"
