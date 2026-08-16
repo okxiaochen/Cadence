@@ -13,6 +13,8 @@ struct SettingsView: View {
                 .tabItem { Label("AI", systemImage: "sparkles") }
             MemorySettings()
                 .tabItem { Label("Memory", systemImage: "brain") }
+            SkillSettings()
+                .tabItem { Label("Skills", systemImage: "list.bullet.rectangle") }
             NotificationSettings()
                 .tabItem { Label("Alerts", systemImage: "bell") }
             UpdateSettings()
@@ -591,6 +593,162 @@ private struct MemorySettings: View {
     private func deleteAll() {
         try? model.database.writer.write { db in try db.execute(sql: "DELETE FROM memory") }
         reload()
+    }
+}
+
+/// What the assistant has worked out about how things are done here.
+///
+/// Separate from Memory because the two are different in a way that matters
+/// when you are looking at them: a memory is a fact about you, a skill is a
+/// procedure, and the reason to open a skill is to check whether the steps are
+/// still right.
+private struct SkillSettings: View {
+    @Environment(AppModel.self) private var model
+
+    @State private var skills: [Skill] = []
+    @State private var forked: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("How things are done here")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text("\(skills.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            Divider()
+
+            if skills.isEmpty {
+                VStack(spacing: 6) {
+                    Text("No procedures yet.")
+                        .foregroundStyle(.secondary)
+                    Text("When the assistant works out how to read one of your "
+                         + "tools, it writes down what worked so the next run "
+                         + "does not start over.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding()
+            } else {
+                List {
+                    ForEach(skills) { skill in
+                        SkillRow(
+                            skill: skill,
+                            isForked: forked.contains(skill.id)
+                        ) {
+                            delete(skill)
+                        }
+                    }
+                }
+                .listStyle(.inset)
+            }
+
+            Divider()
+            Text("Built-in procedures ship with Cadence and update with it. "
+                 + "Editing one keeps your version until you delete it, which "
+                 + "puts the shipped one back.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+        }
+        .onAppear(perform: reload)
+    }
+
+    private func reload() {
+        skills = (try? model.database.writer.read { db in
+            try SkillRepository.all(db)
+        }) ?? []
+        forked = Set((try? model.database.writer.read { db in
+            try SkillRepository.forkedFromBuiltIn(db)
+        })?.map(\.id) ?? [])
+    }
+
+    private func delete(_ skill: Skill) {
+        try? model.database.writer.write { db in
+            _ = try SkillRepository.delete(db, id: skill.id)
+        }
+        reload()
+    }
+}
+
+private struct SkillRow: View {
+    var skill: Skill
+    var isForked: Bool
+    var onDelete: () -> Void
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(skill.title).font(.callout.weight(.medium))
+                    // The line that is always loaded, so it is the line worth
+                    // reading: it is what makes the assistant reach for this.
+                    Text(skill.whenToUse)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(isExpanded ? nil : 2)
+                }
+
+                Spacer(minLength: 0)
+
+                if skill.isStale() {
+                    Text("unverified")
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(.orange.opacity(0.18), in: Capsule())
+                }
+                Text(skill.isBuiltIn ? "Built in" : skill.source)
+                    .font(.caption2)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(.quaternary, in: Capsule())
+
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                }
+                .buttonStyle(.plain)
+
+                // A built-in has no stored row to remove; only an override or
+                // something the assistant wrote can be deleted.
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(skill.isBuiltIn)
+                .opacity(skill.isBuiltIn ? 0.25 : 1)
+            }
+
+            if isForked {
+                Label("The version that ships with Cadence has been updated "
+                      + "since you changed this one. Deleting yours restores it.",
+                      systemImage: "arrow.triangle.branch")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+
+            if isExpanded {
+                Text(skill.body.isEmpty ? "No steps recorded." : skill.body)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 
