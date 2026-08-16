@@ -35,9 +35,18 @@ final class UpgradeTests: XCTestCase {
         let todo = Todo(title: "Survive the update", status: .todo, estimateMinutes: 60)
         try queue.write { db in
             try CatalogRepository.insert(db, project)
-            var owned = todo
-            owned.projectID = project.id
-            try TodoRepository.insert(db, owned)
+            // Written as the old build wrote it, in the columns that existed
+            // then. Going through `TodoRepository.insert` would use today's
+            // `Todo`, so every column added since — `externalID` was the first —
+            // makes this fail against a schema that predates it. The point of
+            // the test is old *data*, so the insert has to be old too.
+            try db.execute(sql: """
+                INSERT INTO task
+                  (id, title, notes, status, priority, estimateMinutes, projectID,
+                   sortOrder, createdAt, updatedAt)
+                VALUES (?, ?, '', 'todo', 0, 60, ?, 0,
+                        '2026-08-10 08:00:00.000', '2026-08-10 08:00:00.000')
+                """, arguments: [todo.id, todo.title, project.id])
             let tag = try CatalogRepository.findOrCreateTag(db, named: "important")
             try TodoRepository.setTags(db, taskID: todo.id, tagIDs: [tag.id])
             try db.execute(sql: """
