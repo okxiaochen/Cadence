@@ -20,18 +20,37 @@ struct PetView: View {
     /// so the field keeps the text rather than swallowing it.
     var onSubmit: (String) -> Bool
 
-    @State private var isHovering = false
+    @State private var isOverFace = false
+    @State private var isOverPanel = false
     @State private var isPinned = false
+    @State private var isOpen = false
+    @State private var closing: Task<Void, Never>?
     @State private var draft = ""
     @State private var breathing = false
     @FocusState private var isTyping: Bool
 
-    private var isOpen: Bool { isHovering || isPinned }
+    /// Opens at once, closes after a beat.
+    ///
+    /// The delay covers the gap between the face and the panel: crossing eight
+    /// points of empty space leaves both, and without it the panel would shut
+    /// on the way to the thing you were reaching for.
+    private func setOpen() {
+        let wanted = isOverFace || isOverPanel || isPinned || isTyping
+        closing?.cancel()
+        guard !wanted else { return isOpen = true }
+        closing = Task {
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard !Task.isCancelled else { return }
+            isOpen = false
+        }
+    }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
             if isOpen {
-                panel.transition(.opacity.combined(with: .move(edge: .bottom)))
+                panel
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .onHover { isOverPanel = $0; setOpen() }
             } else if status.wantsAttention {
                 bubble(status.headline).transition(.opacity)
             }
@@ -42,13 +61,13 @@ struct PetView: View {
         .padding(10)
         .animation(.snappy(duration: 0.18), value: isOpen)
         .animation(.snappy(duration: 0.25), value: status.mood)
-        .onHover { hovering in
-            isHovering = hovering
-            // Typing survives the mouse wandering off; otherwise a half-written
-            // sentence disappears the moment you reach for the keyboard.
-            if !hovering, !isTyping { isPinned = false }
+        // Deliberately *not* on the enclosing stack: it fills the whole window,
+        // so hovering it opened the panel while the pointer was still a long
+        // way from the companion.
+        .onChange(of: isTyping) { _, typing in
+            if typing { isPinned = true }
+            setOpen()
         }
-        .onChange(of: isTyping) { _, typing in if typing { isPinned = true } }
         .task { await breathe() }
     }
 
@@ -74,8 +93,11 @@ struct PetView: View {
                 .fill(status.mood.tint.gradient)
                 .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
 
-            HStack(spacing: 11) { eye; eye }
-                .offset(y: -3)
+            VStack(spacing: 5) {
+                HStack(spacing: 11) { eye; eye }
+                mouth
+            }
+            .offset(y: -1)
 
             if status.openToday > 0 {
                 Text("\(status.openToday)")
@@ -90,7 +112,8 @@ struct PetView: View {
         .frame(width: 56, height: 56)
         .scaleEffect(breathing ? 1.05 : 1.0)
         .contentShape(Circle())
-        .onTapGesture { isPinned.toggle() }
+        .onHover { isOverFace = $0; setOpen() }
+        .onTapGesture { isPinned.toggle(); setOpen() }
     }
 
     /// Eyes carry the mood, which keeps every state a single frame.
@@ -101,6 +124,34 @@ struct PetView: View {
         case .working: Capsule().fill(.black.opacity(0.8)).frame(width: 7, height: 6)
         case .behind: Circle().fill(.black.opacity(0.8)).frame(width: 9, height: 9)
         case .clear, .idle: Circle().fill(.black.opacity(0.75)).frame(width: 8, height: 8)
+        }
+    }
+
+    /// The mouth does the mood; the eyes only agree with it. Two dots can look
+    /// blank or alarmed and not much else, and a face that cannot smile is not
+    /// company.
+    @ViewBuilder
+    private var mouth: some View {
+        switch status.mood {
+        case .clear:
+            // Grinning, and the only one that is filled.
+            Smile(curve: 9)
+                .fill(.black.opacity(0.72))
+                .frame(width: 18, height: 9)
+        case .idle:
+            Smile(curve: 5)
+                .stroke(.black.opacity(0.65), style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                .frame(width: 15, height: 6)
+        case .working:
+            // Straight: concentrating, not unhappy.
+            Capsule().fill(.black.opacity(0.6)).frame(width: 10, height: 1.8)
+        case .restDue:
+            // A yawn.
+            Ellipse().fill(.black.opacity(0.6)).frame(width: 8, height: 10)
+        case .behind:
+            Smile(curve: -5)
+                .stroke(.black.opacity(0.65), style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                .frame(width: 15, height: 6)
         }
     }
 
@@ -214,6 +265,21 @@ struct PetView: View {
             .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
             .frame(maxWidth: 220, alignment: .trailing)
             .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// A curve between two corners. Positive smiles, negative does not.
+private struct Smile: Shape {
+    var curve: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.midY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.midY),
+            control: CGPoint(x: rect.midX, y: rect.midY + curve)
+        )
+        return path
     }
 }
 
