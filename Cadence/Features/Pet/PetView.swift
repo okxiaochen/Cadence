@@ -236,21 +236,18 @@ struct PetView: View {
         return !asks.contains { lowered.hasPrefix($0) || lowered.contains($0) }
     }
 
-    // MARK: - The face
+    // MARK: - The cat
 
     private var face: some View {
         ZStack {
+            // The colour still carries the mood at a glance, from further away
+            // than a small face can be read.
             Circle()
-                .fill(status.mood.tint.gradient)
-                .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+                .fill(status.mood.tint.opacity(0.22))
+                .frame(width: 56, height: 56)
+                .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
 
-            // The gap does the work: eyes near the middle, mouth below it.
-            // Both sat too high when the group was centred as one.
-            VStack(spacing: 9) {
-                HStack(spacing: 11) { eye; eye }
-                mouth
-            }
-            .offset(y: -3)
+            CatFace(mood: status.mood)
 
             if status.openToday > 0 {
                 Text("\(status.openToday)")
@@ -258,54 +255,15 @@ struct PetView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
-                    .background(.black.opacity(0.35), in: Capsule())
-                    .offset(x: 20, y: 20)
+                    .background(.black.opacity(0.45), in: Capsule())
+                    .offset(x: 21, y: 21)
             }
         }
-        .frame(width: 56, height: 56)
+        .frame(width: 62, height: 62)
         .scaleEffect(breathing ? 1.05 : 1.0)
         .contentShape(Circle())
         .onHover { isOverFace = $0; setOpen() }
         .onTapGesture { isPinned.toggle(); setOpen() }
-    }
-
-    /// Eyes carry the mood, which keeps every state a single frame.
-    @ViewBuilder
-    private var eye: some View {
-        switch status.mood {
-        case .restDue: Capsule().fill(.black.opacity(0.75)).frame(width: 9, height: 2.5)
-        case .working: Capsule().fill(.black.opacity(0.8)).frame(width: 7, height: 6)
-        case .behind: Circle().fill(.black.opacity(0.8)).frame(width: 9, height: 9)
-        case .clear, .idle: Circle().fill(.black.opacity(0.75)).frame(width: 8, height: 8)
-        }
-    }
-
-    /// The mouth does the mood; the eyes only agree with it. Two dots can look
-    /// blank or alarmed and not much else, and a face that cannot smile is not
-    /// company.
-    @ViewBuilder
-    private var mouth: some View {
-        switch status.mood {
-        case .clear:
-            // Grinning, and the only one that is filled.
-            Smile(curve: 9)
-                .fill(.black.opacity(0.72))
-                .frame(width: 18, height: 9)
-        case .idle:
-            Smile(curve: 5)
-                .stroke(.black.opacity(0.65), style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
-                .frame(width: 15, height: 6)
-        case .working:
-            // Straight: concentrating, not unhappy.
-            Capsule().fill(.black.opacity(0.6)).frame(width: 10, height: 1.8)
-        case .restDue:
-            // A yawn.
-            Ellipse().fill(.black.opacity(0.6)).frame(width: 8, height: 10)
-        case .behind:
-            Smile(curve: -5)
-                .stroke(.black.opacity(0.65), style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
-                .frame(width: 15, height: 6)
-        }
     }
 
     // MARK: - The day
@@ -678,22 +636,63 @@ struct PetView: View {
     }
 }
 
-/// A curve between two corners. Positive smiles, negative does not.
-private struct Smile: Shape {
-    var curve: CGFloat
+/// The cat, from a picture if the app was given one and from the system's own
+/// cat emoji if it was not.
+///
+/// Drawing the cat out of shapes was tried first and it looked assembled,
+/// because it was. The emoji is a real illustration, ships with macOS at every
+/// size, and carries no licence — but it is also unmistakably an emoji rather
+/// than *this app's* character.
+///
+/// So the picture wins when there is one. Drop `cat-idle`, `cat-working`,
+/// `cat-rest`, `cat-behind` and `cat-clear` into `Resources/Assets.xcassets`
+/// and the companion is that cat instead, with no code change. Anything
+/// missing falls back on its own, so a half-finished set still runs.
+private struct CatFace: View {
+    let mood: PetStatus.Mood
 
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.midY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.midY),
-            control: CGPoint(x: rect.midX, y: rect.midY + curve)
-        )
-        return path
+    var body: some View {
+        if let drawn = NSImage(named: mood.assetName) {
+            Image(nsImage: drawn)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 56, height: 56)
+        } else {
+            Text(mood.cat)
+                .font(.system(size: 40))
+        }
     }
 }
 
 private extension PetStatus.Mood {
+    var assetName: String {
+        switch self {
+        case .idle: "cat-idle"
+        case .working: "cat-working"
+        case .restDue: "cat-rest"
+        case .behind: "cat-behind"
+        case .clear: "cat-clear"
+        }
+    }
+
+    /// Nine cat faces ship with the system, which is more expressions than the
+    /// app has moods — and they are properly drawn, in colour, at every size,
+    /// with no licence attached to anything downloaded from anywhere.
+    ///
+    /// Drawing one by hand was the alternative and it showed: shapes assembled
+    /// into a cat look assembled. This is the same trade as not writing a
+    /// markdown parser — the platform already has one, and better.
+    var cat: String {
+        switch self {
+        case .idle: "🐱"
+        case .working: "😼"
+        case .restDue: "😽"
+        case .behind: "😿"
+        case .clear: "😸"
+        }
+    }
+
     var tint: Color {
         switch self {
         case .idle: .teal
