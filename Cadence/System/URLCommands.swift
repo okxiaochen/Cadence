@@ -17,6 +17,7 @@ enum URLCommand {
     case stop
     case show(taskID: String)
     case report
+    case settings
 
     /// `cadence://add?text=Fix%20the%20thing%20%23bug%20~1h%20tomorrow`
     ///
@@ -48,6 +49,8 @@ enum URLCommand {
             self = .show(taskID: id)
         case "report":
             self = .report
+        case "settings", "preferences":
+            self = .settings
         default:
             return nil
         }
@@ -101,6 +104,20 @@ enum URLCommandHandler {
             NSApp.activate(ignoringOtherApps: true)
             openWindow("report")
             return true
+
+        case .settings:
+            // So "where do I set that?" can be answered with something to
+            // click rather than a path through three levels of tab.
+            NSApp.activate(ignoringOtherApps: true)
+            // Two names for one action: SwiftUI renamed it with the Settings
+            // scene in macOS 14 and older responders still answer to the old
+            // one. Sending only the new name did nothing at all here, which is
+            // the failure worth guarding — a menu action that silently does
+            // not fire looks exactly like a broken link.
+            for name in ["showSettingsWindow:", "showPreferencesWindow:"] {
+                if NSApp.sendAction(Selector((name)), to: nil, from: nil) { break }
+            }
+            return false
         }
     }
 }

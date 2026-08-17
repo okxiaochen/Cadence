@@ -162,6 +162,7 @@ For humans and their launchers (Raycast, a shell alias, a git hook). Agents want
 | `cadence://stop` | Stops every running timer. |
 | `cadence://show?id=…` | Opens the detail panel for a task and brings the app forward. |
 | `cadence://report` | Opens the time report. |
+| `cadence://settings` | Opens Settings. Exists so "where do I change that?" can be answered with something to click. |
 
 Writes do **not** steal focus (`open -g`); `show` and `report` obviously do.
 

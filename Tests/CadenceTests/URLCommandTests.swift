@@ -50,6 +50,15 @@ final class URLCommandTests: XCTestCase {
         XCTAssertEqual(id, "abc")
     }
 
+    /// Exists so "where do I change that?" has an answer you can click.
+    func testSettingsOpensUnderEitherName() {
+        for url in ["cadence://settings", "cadence://preferences", "cadence:///settings"] {
+            guard case .settings? = command(url) else {
+                return XCTFail("expected settings from \(url)")
+            }
+        }
+    }
+
     func testCommandsThatCannotActAreRejected() {
         XCTAssertNil(command("cadence://add"), "nothing to add")
         XCTAssertNil(command("cadence://add?text=%20%20"), "whitespace is not a task")
