@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "cat-idle.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

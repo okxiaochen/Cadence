@@ -72,6 +72,8 @@ struct PetView: View {
     @State private var closing: Task<Void, Never>?
     @State private var draft = ""
     @State private var breathing = false
+    /// Which row the pointer is on, so its timer button is the only one shown.
+    @State private var hovered: String?
     /// Set when a run finishes while nobody is looking, so its result gets a
     /// bubble instead of being silently waiting behind a closed panel.
     @State private var unreadReply: String?
@@ -183,19 +185,29 @@ struct PetView: View {
     /// the reason the question was asked, and a panel that clears itself while
     /// you are reading is the same bug one step later.
     private func ask(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
         isPinned = true
         setOpen()
-        handle(text)
+        session.send(trimmed, surface: .chat)
     }
 
-    /// One line in, two possible meanings. Anything that reads as a task
-    /// becomes one immediately — capture should not cost a model call and half
-    /// a minute of waiting — and everything else is a question.
-    private func handle(_ text: String) {
+    /// What the text field does, which depends on what the text field says.
+    ///
+    /// With nothing said yet it reads "Add a task, or ask…" and guesses between
+    /// the two. Once there is a conversation it reads "Reply…", and then it is
+    /// a reply — no guessing.
+    ///
+    /// It used to guess either way, so answering "Approve it and let's do that"
+    /// filed a task called *Approve it and let's do that* and left the question
+    /// hanging. The guess is defensible for a first line and indefensible for
+    /// an answer: there is a question directly above it, which is as much
+    /// context as a rule ever gets.
+    private func submit(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        if PetView.looksLikeATask(trimmed) {
+        if PetView.shouldCapture(trimmed, inConversation: !thread.isEmpty) {
             let parsed = CaptureParser.parse(trimmed)
             if !parsed.isEmpty {
                 model.createTodo(
@@ -209,23 +221,24 @@ struct PetView: View {
                 return
             }
         }
-        session.send(trimmed, surface: .chat)
-    }
-
-    private func toggleTimer() {
-        if let running = model.runningEntries.first {
-            model.stopTimer(for: running.taskID)
-        } else if case .underway(let item) = model.agendaFocus() {
-            model.toggleTimer(for: item.todo.id)
-        } else if case .next(let item) = model.agendaFocus() {
-            model.toggleTimer(for: item.todo.id)
-        }
+        ask(trimmed)
     }
 
     /// A question ends in a question mark, or asks for something to be done; a
     /// task is a noun phrase. Allowed to be wrong, and leaning towards capture:
     /// guessing that way makes a visible task and one click to undo, guessing
     /// the other costs half a minute of waiting.
+    /// Whether a typed line should be filed rather than sent.
+    ///
+    /// The conversation is the stronger signal and it wins outright. Guessing
+    /// between the two is only reasonable while there is nothing above the
+    /// field to answer; once there is, a line typed under a question is an
+    /// answer to it, and "Approve it and let's do that" is not a task however
+    /// much it parses like one.
+    static func shouldCapture(_ text: String, inConversation: Bool) -> Bool {
+        !inConversation && looksLikeATask(text)
+    }
+
     static func looksLikeATask(_ text: String) -> Bool {
         if text.hasSuffix("?") || text.hasSuffix("？") { return false }
         if text.split(separator: " ").count > 12 { return false }
@@ -240,13 +253,6 @@ struct PetView: View {
 
     private var face: some View {
         ZStack {
-            // The colour still carries the mood at a glance, from further away
-            // than a small face can be read.
-            Circle()
-                .fill(status.mood.tint.opacity(0.22))
-                .frame(width: 56, height: 56)
-                .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
-
             CatFace(mood: status.mood)
 
             if status.openToday > 0 {
@@ -255,11 +261,11 @@ struct PetView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
-                    .background(.black.opacity(0.45), in: Capsule())
-                    .offset(x: 21, y: 21)
+                    .background(.black.opacity(0.55), in: Capsule())
+                    .offset(x: 24, y: 24)
             }
         }
-        .frame(width: 62, height: 62)
+        .frame(width: PetArt.side, height: PetArt.side)
         .scaleEffect(breathing ? 1.05 : 1.0)
         .contentShape(Circle())
         .onHover { isOverFace = $0; setOpen() }
@@ -275,9 +281,15 @@ struct PetView: View {
                     .font(.callout.weight(.medium))
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
-                Button(status.timingMinutes == nil ? "Start" : "Stop") { toggleTimer() }
-                    .buttonStyle(.link)
-                    .font(.caption)
+                // Only "stop", and only when something is running. "Start" was
+                // here too and had nothing to start on an empty day — a control
+                // that does nothing teaches you not to trust the others.
+                // Starting belongs on the row, where the task is named.
+                if model.isTimingAnything {
+                    Button("Stop") { model.stopAllTimers() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
                 if isPinned || isThinking {
                     // Visible while thinking too: a long run is exactly when
                     // somebody needs the corner of their screen back.
@@ -380,7 +392,7 @@ struct PetView: View {
                         .onSubmit {
                             let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
                             guard !text.isEmpty else { return }
-                            ask(text)
+                            submit(text)
                             draft = ""
                         }
                 }
@@ -532,7 +544,16 @@ struct PetView: View {
 
             Spacer(minLength: 4)
 
-            if line.daysLate > 0 {
+            timerButton(line)
+
+            if let running = elapsedMinutes(line) {
+                // The clock replaces the scheduled time while it runs: what
+                // time this was meant to start stops being the useful number
+                // the moment it actually has.
+                Text("\(running)m")
+                    .font(.caption2.weight(.medium).monospacedDigit())
+                    .foregroundStyle(.red)
+            } else if line.daysLate > 0 {
                 Text("\(line.daysLate)d")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.orange)
@@ -545,6 +566,36 @@ struct PetView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .contentShape(Rectangle())
+        .onHover { hovered = $0 ? line.id : (hovered == line.id ? nil : hovered) }
+    }
+
+    /// Start and stop, on the task itself.
+    ///
+    /// Shown on hover so eight rows are not eight play buttons, and always once
+    /// running — a timer you can only stop by finding it again is how an
+    /// overnight session happens. The width is reserved either way, so nothing
+    /// shifts under the pointer as it appears.
+    private func timerButton(_ line: PetStatus.Line) -> some View {
+        let running = model.isTiming(line.id)
+        let show = line.kind == .task && !line.isDone && (running || hovered == line.id)
+        return Group {
+            if show {
+                Button { model.toggleTimer(for: line.id) } label: {
+                    Image(systemName: running ? "stop.circle.fill" : "play.circle")
+                        .foregroundStyle(running ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                }
+                .buttonStyle(.plain)
+                .help(running ? "Stop timing" : "Start timing")
+            }
+        }
+        .font(.caption)
+        .frame(width: 14)
+    }
+
+    private func elapsedMinutes(_ line: PetStatus.Line) -> Int? {
+        guard let entry = model.runningEntries.first(where: { $0.taskID == line.id })
+        else { return nil }
+        return max(0, Int(now.timeIntervalSince(entry.startedAt) / 60))
     }
 
     /// The first line of an answer that arrived while the panel was shut, and
@@ -640,14 +691,18 @@ struct PetView: View {
 /// cat emoji if it was not.
 ///
 /// Drawing the cat out of shapes was tried first and it looked assembled,
-/// because it was. The emoji is a real illustration, ships with macOS at every
-/// size, and carries no licence — but it is also unmistakably an emoji rather
-/// than *this app's* character.
+/// because it was. The emoji that replaced it is a real illustration and ships
+/// at every size, but it is unmistakably an emoji rather than *this app's*
+/// character — so a picture wins whenever there is one, and the emoji is what
+/// keeps a build with a missing asset running rather than blank.
 ///
-/// So the picture wins when there is one. Drop `cat-idle`, `cat-working`,
-/// `cat-rest`, `cat-behind` and `cat-clear` into `Resources/Assets.xcassets`
-/// and the companion is that cat instead, with no code change. Anything
-/// missing falls back on its own, so a half-finished set still runs.
+/// The two are framed differently on purpose. A drawn cat is a whole animal
+/// with its own colour and its own ground shadow, so it stands on the desktop
+/// unaided; an emoji face is a small dark glyph that disappears against a dark
+/// wallpaper, so it keeps the tinted disc behind it. The disc was carrying the
+/// mood at a distance — the poses carry it now, which is why sleeping, working
+/// at a desk and turned-away are five different silhouettes rather than five
+/// tints of one.
 private struct CatFace: View {
     let mood: PetStatus.Mood
 
@@ -657,12 +712,23 @@ private struct CatFace: View {
                 .resizable()
                 .interpolation(.high)
                 .scaledToFit()
-                .frame(width: 56, height: 56)
+                .frame(width: PetArt.side, height: PetArt.side)
+                .shadow(color: .black.opacity(0.22), radius: 4, y: 2)
         } else {
-            Text(mood.cat)
-                .font(.system(size: 40))
+            ZStack {
+                Circle()
+                    .fill(mood.tint.opacity(0.22))
+                    .frame(width: 56, height: 56)
+                    .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
+                Text(mood.cat).font(.system(size: 40))
+            }
         }
     }
+}
+
+enum PetArt {
+    /// Big enough to read a pose at a glance, small enough not to be furniture.
+    static let side: CGFloat = 72
 }
 
 private extension PetStatus.Mood {

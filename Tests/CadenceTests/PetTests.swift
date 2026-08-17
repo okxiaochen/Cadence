@@ -318,6 +318,32 @@ final class PetInputTests: XCTestCase {
         XCTAssertFalse(PetView.looksLikeATask(sentence))
     }
 
+    // MARK: - A reply is a reply
+
+    /// The field says "Reply…" once there is a conversation, and used not to
+    /// mean it: answering a question filed the answer as a task and left the
+    /// question unanswered. Whatever the line looks like, there is a question
+    /// directly above it.
+    func testAnythingTypedIntoAConversationIsAReply() {
+        for text in [
+            "Approve it and let's do that",
+            "Looks right to me",
+            "Buy milk",
+            "Renew TLS cert #ops ~30m"
+        ] {
+            XCTAssertFalse(
+                PetView.shouldCapture(text, inConversation: true), text
+            )
+        }
+    }
+
+    func testTheGuessStillAppliesToTheFirstLine() {
+        XCTAssertTrue(PetView.shouldCapture("Buy milk", inConversation: false))
+        XCTAssertFalse(
+            PetView.shouldCapture("what should I do next?", inConversation: false)
+        )
+    }
+
     // MARK: - Saved buttons
 
     func testAFreshInstallHasSomethingInTheRow() {
