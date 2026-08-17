@@ -216,13 +216,13 @@ final class PromptTests: XCTestCase {
     func testTheNightlyPlanSkipsTheEveOfANonWorkingDay() throws {
         let scheduled = try runs()
         scheduled.nightlyPlanEnabled = true
-        XCTAssertFalse(scheduled.isNightlyDue(now: evening(15), worksTomorrow: false))
+        XCTAssertFalse(scheduled.isNightlyDue(now: evening(15), worksTomorrow: false, lastRun: .some(nil)))
     }
 
     func testTheNightlyPlanRunsOnTheEveOfAWorkingDay() throws {
         let scheduled = try runs()
         scheduled.nightlyPlanEnabled = true
-        XCTAssertTrue(scheduled.isNightlyDue(now: evening(16), worksTomorrow: true))
+        XCTAssertTrue(scheduled.isNightlyDue(now: evening(16), worksTomorrow: true, lastRun: .some(nil)))
     }
 
     func testTheNightlyPlanStillWaitsForItsHour() throws {
@@ -233,7 +233,7 @@ final class PromptTests: XCTestCase {
         let lunchtime = calendar.date(
             from: DateComponents(year: 2026, month: 8, day: 16, hour: 12)
         )!
-        XCTAssertFalse(scheduled.isNightlyDue(now: lunchtime, worksTomorrow: true))
+        XCTAssertFalse(scheduled.isNightlyDue(now: lunchtime, worksTomorrow: true, lastRun: .some(nil)))
     }
 
     // MARK: - Memory provenance

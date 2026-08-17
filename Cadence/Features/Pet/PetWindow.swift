@@ -30,12 +30,16 @@ final class PetWindowController: NSObject, NSWindowDelegate {
     /// requests can never fight over the one CLI process.
     private let session: AgentSession
     let presence = PresenceTracker()
+    private(set) var scheduled: ScheduledPrompts!
 
     init(model: AppModel, preferences: Preferences, session: AgentSession) {
         self.model = model
         self.preferences = preferences
         self.session = session
         super.init()
+        self.scheduled = ScheduledPrompts(
+            preferences: preferences, session: session, presence: presence
+        )
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -45,9 +49,11 @@ final class PetWindowController: NSObject, NSWindowDelegate {
         self.panel = panel
         panel.orderFrontRegardless()
         presence.start()
+        scheduled.start()
     }
 
     func hide() {
+        scheduled.stop()
         presence.stop()
         panel?.orderOut(nil)
     }
@@ -95,6 +101,7 @@ final class PetWindowController: NSObject, NSWindowDelegate {
             preferences: preferences,
             session: session,
             presence: presence,
+            scheduled: scheduled,
             onOpen: { [weak self] in
                 NSApp.activate(ignoringOtherApps: true)
                 self?.openMainWindow()

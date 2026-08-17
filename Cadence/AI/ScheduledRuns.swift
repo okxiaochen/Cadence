@@ -120,17 +120,21 @@ final class ScheduledRuns {
     /// nothing. Two nights in seven, every week. Planning the next working day
     /// instead was the other option and is worse: a plan made on Friday for
     /// Monday is three days stale by the time it is read.
+    /// `lastRun` is injectable for the same reason `worksTomorrow` is: without
+    /// it the answer depends on `UserDefaults`, which a test shares with
+    /// whatever the real app happens to have written this evening.
     func isNightlyDue(
         now: Date = Date(),
         calendar: Calendar = .current,
-        worksTomorrow: Bool? = nil
+        worksTomorrow: Bool? = nil,
+        lastRun: Date?? = nil
     ) -> Bool {
         guard calendar.component(.hour, from: now) >= nightlyHour else { return false }
         guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) else { return false }
         let isWorkingDay = worksTomorrow
             ?? (Preferences.shared.workingHours(on: tomorrow, calendar: calendar) != nil)
         guard isWorkingDay else { return false }
-        guard let last = lastNightlyRun else { return true }
+        guard let last = lastRun ?? lastNightlyRun else { return true }
         return !calendar.isDate(last, inSameDayAs: now)
     }
 

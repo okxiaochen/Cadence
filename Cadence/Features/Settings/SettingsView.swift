@@ -68,6 +68,19 @@ private struct PlanningSettings: View {
                                     TextField("Label", text: $saved.title)
                                         .frame(width: 90)
                                     TextField("What to ask", text: $saved.prompt)
+                                    Picker("", selection: Binding(
+                                        get: { saved.everyMinutes ?? 0 },
+                                        set: { saved.everyMinutes = $0 == 0 ? nil : $0 }
+                                    )) {
+                                        Text("Button").tag(0)
+                                        Text("30m").tag(30)
+                                        Text("1h").tag(60)
+                                        Text("2h").tag(120)
+                                        Text("4h").tag(240)
+                                        Text("Daily").tag(1440)
+                                    }
+                                    .labelsHidden()
+                                    .frame(width: 78)
                                     Button {
                                         preferences.petPrompts.removeAll { $0.id == saved.id }
                                     } label: {
@@ -88,6 +101,14 @@ private struct PlanningSettings: View {
                             .controlSize(.small)
                         }
                     }
+
+                    Text("A cadence turns a button into something it checks on its "
+                         + "own — weather, a share price, a feed you follow. It only "
+                         + "runs while you are at the desk, and only speaks when "
+                         + "there is something worth saying. Anything it has to "
+                         + "fetch needs a command you have allowed under AI.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     Text("Each button sends its text to the assistant. What is "
                          + "worth asking depends on what you have connected — "

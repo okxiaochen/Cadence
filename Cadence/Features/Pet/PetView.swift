@@ -22,6 +22,7 @@ struct PetView: View {
     let preferences: Preferences
     let session: AgentSession
     let presence: PresenceTracker
+    let scheduled: ScheduledPrompts
     var onOpen: () -> Void
 
     /// Ticks so the clock-dependent parts stay current. One state change a
@@ -97,6 +98,11 @@ struct PetView: View {
                 panel
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .onHover { isOverPanel = $0; setOpen() }
+            } else if let announcement = scheduled.announcement {
+                // What a scheduled question came back with. Above the body
+                // nudges: this one was asked for, even if not just now.
+                announcementBubble(scheduled.announcementTitle, announcement)
+                    .transition(.opacity)
             } else if status.nudge.isSomething {
                 // Answerable, because a reminder you cannot reply to is one you
                 // get again in twenty minutes whether or not you acted on it.
@@ -564,6 +570,29 @@ struct PetView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .contentShape(Rectangle())
+    }
+
+    private func announcementBubble(_ title: String?, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                if let title {
+                    Text(title)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 8)
+                Button("Dismiss") { scheduled.dismiss() }
+                    .buttonStyle(.link)
+                    .font(.caption2)
+            }
+            MarkdownText(source: text)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(width: 240, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(.quaternary))
+        .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
     }
 
     private func nudgeBubble(_ nudge: PetNudge) -> some View {
