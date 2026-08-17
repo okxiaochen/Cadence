@@ -29,6 +29,7 @@ final class Preferences {
         petPrompts = .decoded(from: defaults.data(forKey: Key.petPrompts))
         moveAfterMinutes = defaults.integer(forKey: Key.moveAfter, default: 50)
         waterAfterMinutes = defaults.integer(forKey: Key.waterAfter, default: 90)
+        place = defaults.string(forKey: Key.place) ?? ""
         backgroundStyle = BackgroundStyle(
             rawValue: defaults.string(forKey: Key.backgroundStyle) ?? ""
         ) ?? .solid
@@ -44,6 +45,15 @@ final class Preferences {
             let known = Set(petPrompts.map(\.id))
             petPrompts += PetPrompt.defaults.filter { !known.contains($0.id) }
             defaults.set(true, forKey: Key.seededPrompts)
+            defaults.set(petPrompts.encoded, forKey: Key.petPrompts)
+        }
+
+        // A shipped question that turned out to be wrong is replaced, but only
+        // while it is still the shipped text. Somebody who has edited theirs
+        // has said what they want it to say.
+        if let index = petPrompts.firstIndex(where: { $0.id == PetPrompt.weather.id }),
+           PetPrompt.supersededWeather.contains(petPrompts[index].prompt) {
+            petPrompts[index].prompt = PetPrompt.weather.prompt
             defaults.set(petPrompts.encoded, forKey: Key.petPrompts)
         }
     }
@@ -98,6 +108,15 @@ final class Preferences {
     var moveAfterMinutes: Int { didSet { defaults.set(moveAfterMinutes, forKey: Key.moveAfter) } }
     /// Minutes present between water suggestions. 0 turns it off.
     var waterAfterMinutes: Int { didSet { defaults.set(waterAfterMinutes, forKey: Key.waterAfter) } }
+
+    /// Where the user is, in their own words: a city, a district, a postcode.
+    ///
+    /// Needed because the obvious way for a command-line tool to find out —
+    /// letting the service geolocate the request — answers with the internet
+    /// provider's exchange. That is the right answer to "where did this
+    /// connection come from" and the wrong answer to "where am I", and the two
+    /// can be an hour's drive apart.
+    var place: String { didSet { defaults.set(place, forKey: Key.place) } }
 
     /// Saved questions, shown as buttons on the companion.
     var petPrompts: [PetPrompt] {
@@ -229,6 +248,7 @@ final class Preferences {
         static let backgroundOpacity = "backgroundOpacity"
         static let appearance = "appAppearance"
         static let viewOptions = "listViewOptions"
+        static let place = "place"
     }
 }
 

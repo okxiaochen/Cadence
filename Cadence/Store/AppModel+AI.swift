@@ -13,6 +13,7 @@ extension AppModel {
             includesWeekends: preferences.includesWeekends,
             defaultEstimateMinutes: preferences.defaultEstimateMinutes,
             snapMinutes: preferences.snapMinutes,
+            place: preferences.place,
             busy: conflictIntervals(excluding: nil)
         )
     }
@@ -193,6 +194,8 @@ struct PlanningContext: @unchecked Sendable {
     var includesWeekends: Bool
     var defaultEstimateMinutes: Int
     var snapMinutes: Int
+    /// Where the user is, or empty if they have not said.
+    var place: String = ""
     var busy: [DateInterval]
 
     func workingHours(on day: Date, calendar: Calendar = .current) -> DateInterval? {

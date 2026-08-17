@@ -408,6 +408,7 @@ final class AgentSession {
         \(Format.time(now)). Timezone \(TimeZone.current.identifier). Working \
         hours are \(context.workdayStartHour):00–\(context.workdayEndHour):00\
         \(context.includesWeekends ? ", weekends included" : ", weekdays only").
+        \(Self.placeRule(context.place))
 
         Rules:
         - Use find_free_slots to locate time. NEVER compute availability yourself.
@@ -479,6 +480,23 @@ final class AgentSession {
     /// though the user's data were missing.
     private var workItemRules: String {
         Self.workItemRules(enabled: MeegleClient.configured() != nil)
+    }
+
+    /// Where the user is, when they have said.
+    ///
+    /// Worth stating rather than leaving to whatever tool gets called, because
+    /// the usual way a command-line tool answers it is to geolocate the
+    /// request — and that resolves to the internet provider's exchange, which
+    /// is a real place, plausibly named, and not where anybody is sitting. A
+    /// wrong answer that looks right is the kind this has to head off.
+    static func placeRule(_ place: String) -> String {
+        let trimmed = place.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return """
+        I am in \(trimmed). Use that whenever something needs a location — \
+        weather, sunset, what is open, how long a journey takes. Never let a \
+        service work it out from my IP address.
+        """
     }
 
     /// Split from the property so both branches are testable without reaching

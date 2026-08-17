@@ -255,3 +255,42 @@ final class PromptTests: XCTestCase {
         XCTAssertTrue(prompt.contains("forget_skill"), prompt)
     }
 }
+
+/// Where the user is, and why the app has to say so.
+@MainActor
+final class PlaceTests: XCTestCase {
+
+    func testTheSystemPromptStatesThePlaceWhenThereIsOne() {
+        let rule = AgentSession.placeRule("Hong Kong")
+        XCTAssertTrue(rule.contains("Hong Kong"))
+        XCTAssertTrue(rule.contains("IP address"),
+                      "the reason matters — without it the model may still let a tool guess")
+    }
+
+    func testNothingIsSaidWhenNobodyHasSaidWhere() {
+        XCTAssertEqual(AgentSession.placeRule(""), "")
+        XCTAssertEqual(AgentSession.placeRule("   "), "")
+    }
+
+    /// The bug this fixes: `wttr.in/?format=j1` has no place in it, so the
+    /// service answers by geolocating the connection — and reports the internet
+    /// provider's exchange, an hour's drive from where anyone was sitting.
+    func testTheShippedWeatherQuestionNamesAPlace() {
+        XCTAssertTrue(PetPrompt.weather.prompt.contains("PLACE"))
+        XCTAssertFalse(PetPrompt.weather.prompt.contains("wttr.in/?format=j1"))
+    }
+
+    /// Replaced on launch — but only while it is still the text that shipped.
+    func testTheOldWordingIsRecognisedSoItCanBeReplaced() {
+        XCTAssertTrue(PetPrompt.supersededWeather.contains(
+            "Use run_command with: curl -s 'wttr.in/?format=j1'\n\n"
+                + "Tell me only about something I would act on — rain arriving "
+                + "before I go out, a severe alert, a big swing in temperature. "
+                + "Not the forecast, and not that it is unchanged."
+        ))
+        XCTAssertFalse(PetPrompt.supersededWeather.contains(PetPrompt.weather.prompt),
+                       "the current wording must never be superseded by itself")
+        XCTAssertFalse(PetPrompt.supersededWeather.contains("What is the weather?"),
+                       "an edited question is the user's, not ours to overwrite")
+    }
+}

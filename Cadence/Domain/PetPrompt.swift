@@ -51,12 +51,25 @@ struct PetPrompt: Identifiable, Codable, Hashable {
     static let weather = PetPrompt(
         id: "weather",
         title: "Weather",
-        prompt: "Use run_command with: curl -s 'wttr.in/?format=j1'\n\n"
+        prompt: "Use run_command with: curl -s 'wttr.in/PLACE?format=j1', "
+            + "where PLACE is where I am — you were told above; write spaces "
+            + "as +. Drop it only if you were not told.\n\n"
             + "Tell me only about something I would act on — rain arriving "
             + "before I go out, a severe alert, a big swing in temperature. "
             + "Not the forecast, and not that it is unchanged.",
         everyMinutes: 120
     )
+
+    /// Earlier wordings of the shipped weather question, replaced on launch
+    /// while they are still untouched. The first one named a URL with no place
+    /// in it, so wttr.in answered by geolocating the connection and reported
+    /// the exchange it came out of.
+    static let supersededWeather: Set<String> = [
+        "Use run_command with: curl -s 'wttr.in/?format=j1'\n\n"
+            + "Tell me only about something I would act on — rain arriving "
+            + "before I go out, a severe alert, a big swing in temperature. "
+            + "Not the forecast, and not that it is unchanged."
+    ]
 
     /// The feed is a starting point and meant to be replaced; what it is
     /// filtered *against* is the interesting part, and that lives in memory

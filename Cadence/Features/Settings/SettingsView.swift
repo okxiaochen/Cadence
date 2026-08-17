@@ -49,6 +49,18 @@ private struct PlanningSettings: View {
                 Toggle("Show on the desktop", isOn: $preferences.showsDesktopPet)
 
                 if preferences.showsDesktopPet {
+                    LabeledContent("Where I am") {
+                        VStack(alignment: .leading, spacing: 3) {
+                            TextField("City, district or postcode",
+                                      text: $preferences.place)
+                            Text("Left blank, anything that needs a location "
+                                 + "guesses from your IP address — which is your "
+                                 + "provider's exchange, not you.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     Picker("Suggest a break after", selection: $preferences.breakAfterMinutes) {
                         ForEach([25, 40, 50, 60, 90], id: \.self) { Text("\($0)m").tag($0) }
                     }
