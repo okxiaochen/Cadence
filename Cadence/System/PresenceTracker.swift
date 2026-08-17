@@ -23,8 +23,17 @@ final class PresenceTracker {
     /// survive reading a page; short enough that a coffee counts as a break.
     static let awayAfterMinutes = 6
 
+    /// Quiet for this long and the desk is treated as empty *for the purpose of
+    /// drawing*. Much shorter than `awayAfterMinutes`, because the two answer
+    /// different questions: whether somebody has taken a break, and whether
+    /// anybody is looking. A cat wagging its tail at an empty chair costs
+    /// battery on behalf of nobody.
+    static let stillWatchingSeconds: Double = 90
+
     /// Unbroken minutes at the desk. Reset by an absence.
     private(set) var sittingMinutes = 0
+    /// Whether anyone is plausibly looking at the screen right now.
+    private(set) var isAtDesk = true
     /// Minutes present since the last glass of water was suggested and taken.
     private(set) var minutesSinceWater = 0
     private(set) var lastNudgedAt: Date?
@@ -63,7 +72,10 @@ final class PresenceTracker {
 
     /// One minute of wall clock, folded in.
     func tick(now: Date = Date()) {
-        if idleSeconds() >= Double(Self.awayAfterMinutes) * 60 {
+        let idle = idleSeconds()
+        isAtDesk = idle < Self.stillWatchingSeconds
+
+        if idle >= Double(Self.awayAfterMinutes) * 60 {
             // They got up. That is the break, so nothing needs suggesting and
             // the count starts again when they come back.
             sittingMinutes = 0

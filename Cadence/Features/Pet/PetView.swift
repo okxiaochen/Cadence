@@ -50,6 +50,11 @@ struct PetView: View {
 
     private var prompts: [PetPrompt] { preferences.petPrompts.filter(\.isUsable) }
 
+    /// Whether this mood came with a loop of its own.
+    private var hasAnimation: Bool {
+        CatArtwork.animation(named: status.mood.assetName) != nil
+    }
+
     /// The day shrinks to make room for whatever else has to be read. A panel
     /// that grows past the screen shows less, not more.
     private var listHeight: CGFloat {
@@ -166,6 +171,11 @@ struct PetView: View {
     /// frame forever, this redraws for about a second at a time.
     private func breathe() async {
         while !Task.isCancelled {
+            if hasAnimation {
+                // The artwork is doing it properly. Nothing to fake.
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                continue
+            }
             try? await Task.sleep(nanoseconds: UInt64.random(in: 5_000_000_000...9_000_000_000))
             guard !Task.isCancelled, !isOpen else { continue }
             withAnimation(.easeInOut(duration: 0.55)) { breathing = true }
@@ -253,7 +263,7 @@ struct PetView: View {
 
     private var face: some View {
         ZStack {
-            CatFace(mood: status.mood)
+            CatFace(mood: status.mood, isAnimating: !isOpen && presence.isAtDesk)
 
             if status.openToday > 0 {
                 Text("\(status.openToday)")
@@ -266,7 +276,10 @@ struct PetView: View {
             }
         }
         .frame(width: PetArt.side, height: PetArt.side)
-        .scaleEffect(breathing ? 1.05 : 1.0)
+        // Only when there is nothing better. Scaling the whole animal is the
+        // cheap way to fake life and it reads as exactly that — a drawn cat
+        // moves the part a cat moves, which is its tail.
+        .scaleEffect(hasAnimation ? 1.0 : (breathing ? 1.05 : 1.0))
         .contentShape(Circle())
         .onHover { isOverFace = $0; setOpen() }
         .onTapGesture { isPinned.toggle(); setOpen() }
@@ -687,28 +700,35 @@ struct PetView: View {
     }
 }
 
-/// The cat, from a picture if the app was given one and from the system's own
-/// cat emoji if it was not.
+/// The cat: an animation if one was supplied, a still if not, and the system's
+/// cat emoji if neither.
 ///
 /// Drawing the cat out of shapes was tried first and it looked assembled,
 /// because it was. The emoji that replaced it is a real illustration and ships
 /// at every size, but it is unmistakably an emoji rather than *this app's*
-/// character — so a picture wins whenever there is one, and the emoji is what
+/// character — so artwork wins whenever there is any, and the emoji is what
 /// keeps a build with a missing asset running rather than blank.
 ///
-/// The two are framed differently on purpose. A drawn cat is a whole animal
+/// The emoji is framed differently on purpose. A drawn cat is a whole animal
 /// with its own colour and its own ground shadow, so it stands on the desktop
-/// unaided; an emoji face is a small dark glyph that disappears against a dark
-/// wallpaper, so it keeps the tinted disc behind it. The disc was carrying the
-/// mood at a distance — the poses carry it now, which is why sleeping, working
-/// at a desk and turned-away are five different silhouettes rather than five
-/// tints of one.
+/// unaided; an emoji face is a small dark glyph that vanishes against a dark
+/// wallpaper, so it keeps the tinted disc behind it. The disc used to carry the
+/// mood at a distance — the poses carry it now, which is why asleep, at a desk
+/// and turned-away are five silhouettes rather than five tints of one.
 private struct CatFace: View {
     let mood: PetStatus.Mood
+    /// Whether motion is wanted at all right now. False while the panel is up —
+    /// nothing should be moving under text somebody is reading — and false at
+    /// an empty desk, which is most of the day.
+    var isAnimating: Bool
 
     var body: some View {
-        if let drawn = NSImage(named: mood.assetName) {
-            Image(nsImage: drawn)
+        if let animation = CatArtwork.animation(named: mood.assetName) {
+            AnimatedCat(animation: animation, isPlaying: isAnimating)
+                .frame(width: PetArt.side, height: PetArt.side)
+                .shadow(color: .black.opacity(0.22), radius: 4, y: 2)
+        } else if let still = NSImage(named: mood.assetName) {
+            Image(nsImage: still)
                 .resizable()
                 .interpolation(.high)
                 .scaledToFit()
@@ -726,12 +746,43 @@ private struct CatFace: View {
     }
 }
 
+/// Plays a decoded loop, one frame at a time, and stops dead when it is not
+/// wanted.
+///
+/// Deliberately not `NSImageView.animates`: that plays forever from the moment
+/// it is on screen, and this is a window that sits on the desktop all day. The
+/// loop here is a `Task` that can be cancelled, so "not playing" costs exactly
+/// nothing rather than costing less.
+private struct AnimatedCat: View {
+    let animation: CatArtwork.Animation
+    let isPlaying: Bool
+
+    @State private var index = 0
+
+    var body: some View {
+        Image(nsImage: animation.frames[min(index, animation.count - 1)])
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            // Restarted whenever playing changes, and cancelled with the view.
+            .task(id: isPlaying) {
+                guard isPlaying else { return }
+                while !Task.isCancelled {
+                    let hold = animation.delay(at: index)
+                    try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
+                    guard !Task.isCancelled else { return }
+                    index = (index + 1) % animation.count
+                }
+            }
+    }
+}
+
 enum PetArt {
     /// Big enough to read a pose at a glance, small enough not to be furniture.
     static let side: CGFloat = 72
 }
 
-private extension PetStatus.Mood {
+extension PetStatus.Mood {
     var assetName: String {
         switch self {
         case .idle: "cat-idle"
