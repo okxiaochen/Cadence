@@ -35,6 +35,15 @@ struct ApprovedCommand: Identifiable, Codable, Hashable, FetchableRecord, Persis
     var argumentsJSON: String
     /// What the assistant said this was for, shown when approving.
     var purpose: String
+    /// How much the approval covers.
+    ///
+    /// `command` is the default because per-argv approval turned installing one
+    /// tool into a stream of near-identical consent prompts, and a prompt
+    /// answered by reflex protects nobody. What holds the line instead is that
+    /// **an unattended run cannot ask for a new approval at all** — so the
+    /// worst an attacker-supplied instruction can reach is a tool you already
+    /// chose to trust, used badly, rather than anything at all.
+    var scope: String = Scope.command
     var approvedAt: Date = Date()
     var lastUsedAt: Date?
 
@@ -42,13 +51,24 @@ struct ApprovedCommand: Identifiable, Codable, Hashable, FetchableRecord, Persis
         (try? JSONDecoder().decode([String].self, from: Data(argumentsJSON.utf8))) ?? []
     }
 
+    enum Scope {
+        /// This command, whatever arguments it is given.
+        static let command = "command"
+        /// This command with exactly these arguments, placeholders aside.
+        static let exact = "exact"
+    }
+
+    var coversAnyArguments: Bool { scope == Scope.command }
+
     init(
         id: String = UUID().uuidString,
         connector: String,
         command: String,
         arguments: [String],
-        purpose: String
+        purpose: String,
+        scope: String = Scope.command
     ) {
+        self.scope = scope
         self.id = id
         self.connector = connector
         self.command = command
@@ -63,9 +83,19 @@ struct ApprovedCommand: Identifiable, Codable, Hashable, FetchableRecord, Persis
     /// point of a template — but everything around them is.
     var signature: String { ([command] + arguments).joined(separator: "\u{1}") }
 
+    /// Always the concrete command line. A wider approval is more reason to
+    /// show exactly what is about to run, not less — the extent belongs beside
+    /// it, not instead of it.
     func display(with values: [String: String] = [:]) -> String {
         ([command] + ApprovedCommand.substitute(arguments, with: values))
             .joined(separator: " ")
+    }
+
+    /// How far the approval reaches, said plainly next to the command.
+    var extent: String {
+        coversAnyArguments
+            ? "Allows any use of \(command)"
+            : "Allows only this exact command"
     }
 
     static func substitute(_ arguments: [String], with values: [String: String]) -> [String] {
@@ -205,20 +235,26 @@ enum ApprovedCommandRepository {
     }
 
     /// The lookup a call makes: is this exact shape already allowed?
+    /// A command-wide approval covers any call to it; an exact one covers only
+    /// its own shape.
     static func matching(
         _ db: Database, command: String, arguments: [String]
     ) throws -> ApprovedCommand? {
         let wanted = ApprovedCommand(
-            connector: "", command: command, arguments: arguments, purpose: ""
+            connector: "", command: command, arguments: arguments,
+            purpose: "", scope: ApprovedCommand.Scope.exact
         ).signature
-        return try all(db).first { $0.signature == wanted }
+        return try all(db).first { approved in
+            if approved.coversAnyArguments { return approved.command == command }
+            return approved.signature == wanted
+        }
     }
 
     @discardableResult
     static func approve(_ db: Database, _ approved: ApprovedCommand) throws -> Bool {
         if let existing = try matching(
             db, command: approved.command, arguments: approved.arguments
-        ) {
+        ), existing.coversAnyArguments == approved.coversAnyArguments {
             try touch(db, id: existing.id)
             return false
         }

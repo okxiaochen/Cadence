@@ -10,6 +10,20 @@ enum AISurface: String, Codable, CaseIterable {
     /// own surfaces — a run nobody asked for should be identifiable later.
     case nightly, reflection
 
+    /// Whether somebody asked for this just now and is there to answer.
+    ///
+    /// The line the whole permission model rests on. A run somebody started may
+    /// ask to be allowed something new, because they are present to read the
+    /// request and refuse it. A run that started itself may only use what has
+    /// already been allowed — otherwise a hostile line in a feed it was told to
+    /// read could ask for anything, at three in the morning, with nobody there.
+    var isInteractive: Bool {
+        switch self {
+        case .nightly, .reflection: false
+        default: true
+        }
+    }
+
     var title: String {
         switch self {
         case .chat: "Chat"

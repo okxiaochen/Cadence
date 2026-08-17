@@ -221,8 +221,8 @@ enum ProposalValidator {
                 // summary of its intent would be the assistant's word for it.
                 summary = "Run \(approved.display())"
                 detail = approved.purpose.isEmpty
-                    ? "Allows \(approved.connector)"
-                    : "\(approved.purpose) · connector: \(approved.connector)"
+                    ? approved.extent
+                    : "\(approved.purpose) · \(approved.extent)"
                 do {
                     try CommandGate.check(
                         command: approved.command, arguments: approved.arguments

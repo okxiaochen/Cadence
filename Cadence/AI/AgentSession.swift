@@ -206,7 +206,8 @@ final class AgentSession {
                 database: model.database,
                 buffer: buffer,
                 context: model.planningContext(),
-                meegle: MeegleClient.configured()
+                meegle: MeegleClient.configured(),
+                mayRequestApproval: surface.isInteractive
             )
             server.onToolCall = { [weak self] name in
                 Task { @MainActor in self?.toolCalls.append(name) }

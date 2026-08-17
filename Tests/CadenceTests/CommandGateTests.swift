@@ -116,11 +116,15 @@ final class CommandGateTests: XCTestCase {
     }
 
     // MARK: - Approval is of the shape, not the intent
+    //
+    // Only for approvals granted that way. A command-wide one deliberately
+    // covers any call to the tool — see the section below.
 
     func testADifferentArgumentShapeIsADifferentPermission() throws {
         let approved = ApprovedCommand(
             connector: "slack", command: "slack-cli",
-            arguments: ["conversations", "list", "--json"], purpose: "read chats"
+            arguments: ["conversations", "list", "--json"], purpose: "read chats",
+            scope: ApprovedCommand.Scope.exact
         )
         try database.writer.write { db in
             try ApprovedCommandRepository.approve(db, approved)
@@ -140,12 +144,13 @@ final class CommandGateTests: XCTestCase {
         }
     }
 
-    func testApprovingTheSameShapeTwiceDoesNotDuplicateIt() throws {
+    /// Twice over, for a tool already trusted whatever the arguments were.
+    func testApprovingTheSameCommandTwiceDoesNotDuplicateIt() throws {
         let first = ApprovedCommand(
             connector: "slack", command: "slack-cli", arguments: ["list"], purpose: ""
         )
         let again = ApprovedCommand(
-            connector: "slack", command: "slack-cli", arguments: ["list"], purpose: ""
+            connector: "slack", command: "slack-cli", arguments: ["history"], purpose: ""
         )
         try database.writer.write { db in
             XCTAssertTrue(try ApprovedCommandRepository.approve(db, first))
@@ -157,16 +162,147 @@ final class CommandGateTests: XCTestCase {
     func testRevokingAConnectorTakesEveryCommandItCameWith() throws {
         try database.writer.write { db in
             try ApprovedCommandRepository.approve(db, ApprovedCommand(
-                connector: "slack", command: "slack-cli", arguments: ["a"], purpose: ""
+                connector: "slack", command: "slack-cli", arguments: [], purpose: ""
             ))
             try ApprovedCommandRepository.approve(db, ApprovedCommand(
-                connector: "slack", command: "slack-cli", arguments: ["b"], purpose: ""
+                connector: "slack", command: "slack-history", arguments: [], purpose: ""
             ))
             try ApprovedCommandRepository.approve(db, ApprovedCommand(
                 connector: "jira", command: "jira", arguments: ["c"], purpose: ""
             ))
             XCTAssertEqual(try ApprovedCommandRepository.revoke(db, connector: "slack"), 2)
             XCTAssertEqual(try ApprovedCommandRepository.all(db).map(\.connector), ["jira"])
+        }
+    }
+
+    // MARK: - How much one approval covers
+
+    /// Per-argv approval turned installing one tool into a stream of
+    /// near-identical consent prompts, and a prompt answered by reflex protects
+    /// nobody.
+    func testApprovingACommandCoversAnyArguments() throws {
+        try database.writer.write { db in
+            try ApprovedCommandRepository.approve(db, ApprovedCommand(
+                connector: "canteen", command: "canteen-cli",
+                arguments: ["menu"], purpose: "read the menu"
+            ))
+        }
+        try database.writer.read { db in
+            XCTAssertNotNil(try ApprovedCommandRepository.matching(
+                db, command: "canteen-cli", arguments: ["order", "--id", "42"]
+            ), "a command-wide approval covers a different call to it")
+            XCTAssertNil(try ApprovedCommandRepository.matching(
+                db, command: "other-cli", arguments: ["menu"]
+            ), "and covers nothing else")
+        }
+    }
+
+    /// Somebody who approved one exact command line did not agree to every
+    /// other use of that tool, so the older, narrower meaning is kept.
+    func testAnExactApprovalStillOnlyCoversItsOwnShape() throws {
+        try database.writer.write { db in
+            try ApprovedCommandRepository.approve(db, ApprovedCommand(
+                connector: "git", command: "git", arguments: ["log"],
+                purpose: "", scope: ApprovedCommand.Scope.exact
+            ))
+        }
+        try database.writer.read { db in
+            XCTAssertNotNil(try ApprovedCommandRepository.matching(
+                db, command: "git", arguments: ["log"]
+            ))
+            XCTAssertNil(try ApprovedCommandRepository.matching(
+                db, command: "git", arguments: ["push", "--force"]
+            ))
+        }
+    }
+
+    /// Widening it does not widen what may be approved at all.
+    func testAShellIsStillRefusedHoweverBroadTheScope() {
+        XCTAssertThrowsError(try CommandGate.check(command: "bash", arguments: []))
+    }
+
+    // MARK: - Who may ask for something new
+    //
+    // The line the whole model rests on, now that one approval covers a whole
+    // tool: a run nobody started may only use what has already been allowed.
+
+    private func catalog(mayRequestApproval: Bool) -> ToolCatalog {
+        ToolCatalog(
+            database: database,
+            buffer: buffer,
+            context: PlanningContext(
+                workdayStartHour: 9, workdayEndHour: 18, includesWeekends: false,
+                defaultEstimateMinutes: 30, snapMinutes: 15, busy: []
+            ),
+            mayRequestApproval: mayRequestApproval
+        )
+    }
+
+    func testAnUnattendedRunCannotAskForAnythingNew() throws {
+        let unattended = catalog(mayRequestApproval: false)
+        let result = try unattended.call("run_command", arguments: [
+            "connector": "x", "command": "curl", "arguments": ["https://example.com"]
+        ]) as? [String: Any] ?? [:]
+
+        XCTAssertEqual(result["ran"] as? Bool, false)
+        XCTAssertEqual(result["awaitingApproval"] as? Bool, false)
+        XCTAssertTrue(
+            buffer.drain().changes.isEmpty,
+            "a feed it was told to read must not be able to queue up a permission"
+        )
+    }
+
+    /// Found by running it: a command-wide approval was matching the call and
+    /// then executing the *stored* arguments, so asking for one city's weather
+    /// returned another's. Silently running something other than what was asked
+    /// is the worst shape a permission bug can take.
+    func testACommandWideApprovalRunsWhatWasActuallyAskedFor() throws {
+        try database.writer.write { db in
+            try ApprovedCommandRepository.approve(db, ApprovedCommand(
+                connector: "x", command: "echo", arguments: ["first"], purpose: ""
+            ))
+        }
+        let result = try call("run_command", [
+            "connector": "x", "command": "echo", "arguments": ["second"]
+        ])
+        XCTAssertEqual(result["ran"] as? Bool, true)
+        XCTAssertEqual(result["command"] as? String, "echo second")
+        XCTAssertEqual((result["output"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), "second")
+    }
+
+    /// An exact approval keeps running its own template, placeholders and all.
+    func testAnExactApprovalStillRunsTheShapeThatWasApproved() throws {
+        try database.writer.write { db in
+            try ApprovedCommandRepository.approve(db, ApprovedCommand(
+                connector: "x", command: "echo", arguments: ["{word}"],
+                purpose: "", scope: ApprovedCommand.Scope.exact
+            ))
+        }
+        let result = try call("run_command", [
+            "connector": "x", "command": "echo", "arguments": ["{word}"],
+            "values": ["word": "hello"]
+        ])
+        XCTAssertEqual(result["command"] as? String, "echo hello")
+    }
+
+    func testAnUnattendedRunStillUsesWhatWasAlreadyAllowed() throws {
+        try database.writer.write { db in
+            try ApprovedCommandRepository.approve(db, ApprovedCommand(
+                connector: "x", command: "echo", arguments: [], purpose: ""
+            ))
+        }
+        let result = try catalog(mayRequestApproval: false).call("run_command", arguments: [
+            "connector": "x", "command": "echo", "arguments": ["hello"]
+        ]) as? [String: Any] ?? [:]
+        XCTAssertEqual(result["ran"] as? Bool, true)
+    }
+
+    @MainActor
+    func testOnlyTheRunsNobodyStartedAreRestricted() {
+        XCTAssertFalse(AISurface.nightly.isInteractive)
+        XCTAssertFalse(AISurface.reflection.isInteractive)
+        for surface in [AISurface.chat, .breakdown, .generate, .schedule] {
+            XCTAssertTrue(surface.isInteractive, surface.rawValue)
         }
     }
 
@@ -292,10 +428,10 @@ final class CommandGateTests: XCTestCase {
     func testRevokingOneCommandLeavesTheOthers() throws {
         try database.writer.write { db in
             try ApprovedCommandRepository.approve(db, ApprovedCommand(
-                connector: "slack", command: "slack-cli", arguments: ["a"], purpose: ""
+                connector: "slack", command: "slack-cli", arguments: [], purpose: ""
             ))
             try ApprovedCommandRepository.approve(db, ApprovedCommand(
-                connector: "slack", command: "slack-cli", arguments: ["b"], purpose: ""
+                connector: "slack", command: "slack-history", arguments: [], purpose: ""
             ))
         }
         let first = try database.writer.read { db in

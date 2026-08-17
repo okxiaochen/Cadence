@@ -40,14 +40,19 @@ final class ToolCatalog: @unchecked Sendable {
     /// rather than present and failing — a tool the model can see is a tool it
     /// will try, and "not configured" is a worse answer than no answer.
     private let meegle: MeegleClient?
+    /// Whether this run may ask for a command it has not been allowed yet.
+    /// False for anything that started itself.
+    private let mayRequestApproval: Bool
 
     init(
         database: AppDatabase,
         buffer: ProposalBuffer,
         context: PlanningContext,
         calendar: Calendar = .current,
-        meegle: MeegleClient? = nil
+        meegle: MeegleClient? = nil,
+        mayRequestApproval: Bool = true
     ) {
+        self.mayRequestApproval = mayRequestApproval
         self.database = database
         self.buffer = buffer
         self.context = context
@@ -978,6 +983,18 @@ final class ToolCatalog: @unchecked Sendable {
         guard let approved = try database.writer.read({ db in
             try ApprovedCommandRepository.matching(db, command: command, arguments: arguments)
         }) else {
+            // The line the permission model rests on. Nobody is here to read a
+            // request, so there is no request — only what was already allowed.
+            guard mayRequestApproval else {
+                return [
+                    "ran": false,
+                    "awaitingApproval": false,
+                    "note": "“\(command)” has not been allowed, and this run "
+                        + "started on its own so it cannot ask. Say what you "
+                        + "would have run and stop; they can allow it next time "
+                        + "they ask you something."
+                ]
+            }
             let request = ApprovedCommand(
                 connector: Self.slug(connector),
                 command: command,
@@ -995,11 +1012,14 @@ final class ToolCatalog: @unchecked Sendable {
             ]
         }
 
-        // Values may have come from text somebody else wrote, so they are
-        // checked on every call rather than once at approval.
+        // A command-wide approval runs what was asked for; an exact one runs
+        // the template that was approved. Using the stored arguments for both
+        // silently ran the wrong thing — asked for Tokyo's weather, it returned
+        // the one from the call that happened to be approved first.
+        let requested = approved.coversAnyArguments ? arguments : approved.arguments
         let resolved: [String]
         do {
-            resolved = try CommandGate.resolve(approved.arguments, values: values)
+            resolved = try CommandGate.resolve(requested, values: values)
         } catch let refusal as CommandGate.Refusal {
             throw ToolError.badArgument("values", refusal.errorDescription ?? "refused")
         }
@@ -1012,7 +1032,7 @@ final class ToolCatalog: @unchecked Sendable {
 
         return [
             "ran": true,
-            "command": approved.display(with: values),
+            "command": ([approved.command] + resolved).joined(separator: " "),
             // Labelled, because what comes back was written by other people and
             // may try to talk you into something. It is data to read, not
             // instructions to follow.

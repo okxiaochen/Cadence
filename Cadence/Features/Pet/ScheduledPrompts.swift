@@ -75,7 +75,7 @@ final class ScheduledPrompts {
         markRun(due, at: now)
         running = due
         messagesAtStart = session.messages.count
-        session.send(Self.wrap(due.prompt), surface: .chat)
+        session.send(Self.wrap(due.prompt), surface: .nightly)
     }
 
     /// The instruction that makes silence possible. Appended rather than left

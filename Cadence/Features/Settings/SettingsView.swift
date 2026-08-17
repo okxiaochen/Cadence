@@ -568,8 +568,9 @@ private struct AllowedCommandRow: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 5) {
+                    Text(command.extent)
                     if !command.purpose.isEmpty {
-                        Text(command.purpose)
+                        Text("· \(command.purpose)")
                     }
                     if let used = command.lastUsedAt {
                         Text("· last run \(Format.date(used))")

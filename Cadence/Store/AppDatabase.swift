@@ -347,6 +347,18 @@ final class AppDatabase {
                 """)
         }
 
+        // M14: how much an approval covers.
+        //
+        // Existing rows keep the narrow meaning they were granted under —
+        // somebody who approved one exact command line did not agree to every
+        // other use of that tool, and widening it for them retroactively would
+        // be deciding on their behalf.
+        migrator.registerMigration("v14_approval_scope") { db in
+            try db.execute(sql: """
+                ALTER TABLE approved_command ADD COLUMN scope TEXT NOT NULL DEFAULT 'exact'
+                """)
+        }
+
         return migrator
     }
 }
