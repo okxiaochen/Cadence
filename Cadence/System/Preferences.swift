@@ -26,6 +26,7 @@ final class Preferences {
         meegleEnabled = defaults.bool(forKey: Key.meegle, default: false)
         showsDesktopPet = defaults.bool(forKey: Key.pet, default: false)
         breakAfterMinutes = defaults.integer(forKey: Key.breakAfter, default: 50)
+        petPrompts = .decoded(from: defaults.data(forKey: Key.petPrompts))
         backgroundStyle = BackgroundStyle(
             rawValue: defaults.string(forKey: Key.backgroundStyle) ?? ""
         ) ?? .solid
@@ -79,6 +80,11 @@ final class Preferences {
     /// Minutes at the clock before it suggests stopping.
     var breakAfterMinutes: Int {
         didSet { defaults.set(breakAfterMinutes, forKey: Key.breakAfter) }
+    }
+
+    /// Saved questions, shown as buttons on the companion.
+    var petPrompts: [PetPrompt] {
+        didSet { defaults.set(petPrompts.encoded, forKey: Key.petPrompts) }
     }
 
     /// Where it was last dragged to, so it stays where it was put.
@@ -198,6 +204,7 @@ final class Preferences {
         static let pet = "showsDesktopPet"
         static let breakAfter = "breakAfterMinutes"
         static let petOrigin = "petWindowOrigin"
+        static let petPrompts = "petPrompts"
         static let backgroundStyle = "backgroundStyle"
         static let backgroundOpacity = "backgroundOpacity"
         static let appearance = "appAppearance"

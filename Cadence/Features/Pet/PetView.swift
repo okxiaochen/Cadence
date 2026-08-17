@@ -15,10 +15,17 @@ struct PetView: View {
     var status: PetStatus
     var onOpen: () -> Void
     var onToggleTimer: () -> Void
+    /// Fired when the panel opens, so a question that has been read stops being
+    /// asked.
+    var onOpened: () -> Void
     var onToggleDone: (String) -> Void
-    /// Whatever was typed at it. Returning false means it was not understood,
-    /// so the field keeps the text rather than swallowing it.
-    var onSubmit: (String) -> Bool
+    /// Saved questions, shown as buttons.
+    var prompts: [PetPrompt]
+    /// Sends something to the assistant.
+    var onAsk: (String) -> Void
+    /// Whether the assistant is busy, and its last reply if there is one.
+    var isThinking: Bool
+    var lastReply: String?
 
     @State private var isOverFace = false
     @State private var isOverPanel = false
@@ -68,6 +75,7 @@ struct PetView: View {
             if typing { isPinned = true }
             setOpen()
         }
+        .onChange(of: isOpen) { _, open in if open { onOpened() } }
         .task { await breathe() }
     }
 
@@ -93,11 +101,13 @@ struct PetView: View {
                 .fill(status.mood.tint.gradient)
                 .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
 
-            VStack(spacing: 5) {
+            // The gap does the work: eyes near the middle, mouth below it.
+            // Both sat too high when the group was centred as one.
+            VStack(spacing: 9) {
                 HStack(spacing: 11) { eye; eye }
                 mouth
             }
-            .offset(y: -1)
+            .offset(y: -3)
 
             if status.openToday > 0 {
                 Text("\(status.openToday)")
@@ -195,21 +205,67 @@ struct PetView: View {
 
             Divider()
 
-            // The way in for everything this does not do yet. Today it captures;
-            // the field is the part that has to exist for anything else to be
-            // reachable from here.
-            HStack(spacing: 6) {
-                Image(systemName: "plus.circle").foregroundStyle(.secondary)
-                TextField("Add a task…", text: $draft)
-                    .textFieldStyle(.plain)
-                    .font(.caption)
-                    .focused($isTyping)
-                    .onSubmit {
-                        if onSubmit(draft) { draft = "" }
+            if !prompts.isEmpty {
+                // Buttons rather than features: what is worth asking depends on
+                // what somebody has connected, so the app ships the way to ask.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(prompts) { saved in
+                            Button(saved.title) { onAsk(saved.prompt) }
+                                .buttonStyle(.borderless)
+                                .font(.caption2)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.quaternary.opacity(0.6), in: Capsule())
+                        }
                     }
+                    .padding(.horizontal, 12)
+                }
+                .padding(.vertical, 7)
+                .disabled(isThinking)
+                .opacity(isThinking ? 0.4 : 1)
+
+                Divider()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+
+            if isThinking {
+                HStack(spacing: 7) {
+                    ProgressView().controlSize(.small)
+                    Text("Thinking…").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+            } else {
+                if let lastReply, !lastReply.isEmpty {
+                    Text(lastReply)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                }
+
+                // One field for both: a line that parses as a task becomes one
+                // without waiting on a model, and anything else is a question.
+                // Making the user choose which they meant would be asking them
+                // to know how it works.
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkle").foregroundStyle(.secondary)
+                    TextField("Add a task, or ask…", text: $draft)
+                        .textFieldStyle(.plain)
+                        .font(.caption)
+                        .focused($isTyping)
+                        .onSubmit {
+                            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !text.isEmpty else { return }
+                            onAsk(text)
+                            draft = ""
+                        }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+            }
         }
         .frame(width: 268, alignment: .leading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
@@ -302,6 +358,7 @@ extension PetStatus {
     var wantsAttention: Bool {
         if breakAdvice.isDue { return true }
         if let event = nextEvent, event.minutesAway <= 10 { return true }
+        if justEnded != nil { return true }
         return false
     }
 }

@@ -12,6 +12,11 @@ struct PetStatus: Equatable {
     var focus: AgendaBuilder.Focus
     /// The next meeting, if one is close enough to be worth mentioning.
     var nextEvent: PetStatus.Event?
+    /// A meeting that has just finished and not yet been answered.
+    ///
+    /// The moment worth catching: what a meeting produced is clearest in the
+    /// thirty seconds after it, and gone by the time anyone opens a task list.
+    var justEnded: PetStatus.Event?
     /// Minutes on the clock right now, if anything is being timed.
     var timingMinutes: Int?
     var breakAdvice: BreakAdvice
@@ -105,6 +110,11 @@ extension PetStatus {
     /// not "coming up", it is just something in the calendar.
     static let eventHorizonMinutes = 45
 
+    /// How long after a meeting it is still worth asking what came out of it.
+    /// Long enough to catch someone coming back to their desk, short enough
+    /// that it is not asking about this morning.
+    static let followUpWindowMinutes = 12
+
     /// One line, in the app's voice rather than a pet's. What it says has to be
     /// worth the interruption, so the order is: something is wrong, something
     /// is about to start, something is running, then the day in general.
@@ -112,9 +122,14 @@ extension PetStatus {
         if case .due(let worked) = breakAdvice {
             return "\(Format.duration(worked)) without a break."
         }
+        // Being late to the next thing matters more than tidying up the last
+        // one, so this order is the other way round from how they were added.
         if let event = nextEvent {
             if event.minutesAway <= 0 { return "\(event.title) — now." }
             return "\(event.title) in \(Format.duration(event.minutesAway))."
+        }
+        if let ended = justEnded {
+            return "\(ended.title) — anything to follow up?"
         }
         if let timingMinutes {
             return "Timing — \(Format.duration(max(1, timingMinutes)))."

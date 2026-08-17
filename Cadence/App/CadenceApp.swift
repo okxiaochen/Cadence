@@ -71,7 +71,7 @@ struct CadenceApp: App {
         let model = AppModel(database: database)
         _model = State(initialValue: model)
         _quickCapture = State(initialValue: QuickCaptureController(model: model))
-        _pet = State(initialValue: PetWindowController(model: model, preferences: .shared))
+
 
         _updater = State(initialValue: Updater(database: database))
         _notifications = State(initialValue: NotificationService(model: model))
@@ -81,6 +81,9 @@ struct CadenceApp: App {
         let session = AgentSession(model: model)
         _session = State(initialValue: session)
         _scheduledRuns = State(initialValue: ScheduledRuns(model: model, session: session))
+        _pet = State(initialValue: PetWindowController(
+            model: model, preferences: .shared, session: session
+        ))
         _startupError = State(initialValue: failure)
     }
 

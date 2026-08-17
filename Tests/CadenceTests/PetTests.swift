@@ -25,12 +25,14 @@ final class PetTests: XCTestCase {
         openToday: Int = 0,
         focus: AgendaBuilder.Focus = .empty,
         nextEvent: PetStatus.Event? = nil,
+        justEnded: PetStatus.Event? = nil,
         timingMinutes: Int? = nil,
         breakAdvice: BreakAdvice = .none
     ) -> PetStatus {
         PetStatus(
             openToday: openToday, focus: focus, nextEvent: nextEvent,
-            timingMinutes: timingMinutes, breakAdvice: breakAdvice
+            justEnded: justEnded, timingMinutes: timingMinutes,
+            breakAdvice: breakAdvice
         )
     }
 
@@ -225,6 +227,38 @@ final class PetTests: XCTestCase {
         )
     }
 
+    // MARK: - After a meeting
+    //
+    // The moment worth catching: what a meeting produced is clearest in the
+    // thirty seconds after it and gone by the time anyone opens a task list.
+
+    func testAMeetingThatJustEndedIsWorthAskingAbout() {
+        let ended = PetStatus.Event(title: "Standup", start: Date(), minutesAway: -35)
+        XCTAssertTrue(status(justEnded: ended).wantsAttention)
+        XCTAssertEqual(
+            status(justEnded: ended).headline,
+            "Standup — anything to follow up?"
+        )
+    }
+
+    /// Being late to the next thing matters more than tidying up the last one.
+    func testSomethingStartingShortlyOutranksTheOneThatEnded() {
+        let line = status(
+            nextEvent: PetStatus.Event(title: "Review", start: Date(), minutesAway: 4),
+            justEnded: PetStatus.Event(title: "Standup", start: Date(), minutesAway: -35)
+        ).headline
+        XCTAssertTrue(line.contains("Review"), line)
+    }
+
+    func testABreakStillOutranksBoth() {
+        let line = status(
+            nextEvent: PetStatus.Event(title: "Review", start: Date(), minutesAway: 4),
+            justEnded: PetStatus.Event(title: "Standup", start: Date(), minutesAway: -35),
+            breakAdvice: .due(workedMinutes: 70)
+        ).headline
+        XCTAssertTrue(line.contains("without a break"), line)
+    }
+
     // MARK: - The face
 
     func testTheMoodShowsTheMostUrgentThing() {
@@ -242,5 +276,63 @@ final class PetTests: XCTestCase {
             status(timingMinutes: 61, breakAdvice: .due(workedMinutes: 61)).mood,
             .restDue
         )
+    }
+}
+
+/// Which of the two things a typed line means.
+///
+/// It is a heuristic and allowed to be wrong: guessing "task" for a question
+/// makes a task, which is visible and one click to undo. Guessing "question"
+/// for a task costs thirty seconds and a model call, which is the worse of the
+/// two, so the doubt leans towards capture.
+@MainActor
+final class PetInputTests: XCTestCase {
+
+    func testAPlainNounPhraseIsATask() {
+        for text in ["Buy milk", "Fix the flaky scheduler test", "Renew TLS cert #ops ~30m"] {
+            XCTAssertTrue(PetWindowController.looksLikeATask(text), text)
+        }
+    }
+
+    func testAQuestionIsNot() {
+        for text in ["what should I do next?", "有什么没做完的？"] {
+            XCTAssertFalse(PetWindowController.looksLikeATask(text), text)
+        }
+    }
+
+    func testAnInstructionIsNot() {
+        for text in [
+            "plan my afternoon",
+            "move the roadmap to Friday",
+            "帮我看看今天还有什么",
+            "整理一下未读消息"
+        ] {
+            XCTAssertFalse(PetWindowController.looksLikeATask(text), text)
+        }
+    }
+
+    /// Capture is a line; a request is a sentence.
+    func testSomethingLongIsAskedRatherThanCaptured() {
+        let sentence = "go through everything assigned to me and tell me which "
+            + "of it actually matters before the end of this week"
+        XCTAssertFalse(PetWindowController.looksLikeATask(sentence))
+    }
+
+    // MARK: - Saved buttons
+
+    func testAFreshInstallHasSomethingInTheRow() {
+        // An empty row teaches nobody what the row is for.
+        XCTAssertFalse([PetPrompt].decoded(from: nil).isEmpty)
+    }
+
+    func testAnEmptyButtonIsNotShown() {
+        XCTAssertFalse(PetPrompt(title: "", prompt: "do a thing").isUsable)
+        XCTAssertFalse(PetPrompt(title: "Go", prompt: "   ").isUsable)
+        XCTAssertTrue(PetPrompt(title: "Go", prompt: "do a thing").isUsable)
+    }
+
+    func testButtonsSurviveARoundTrip() throws {
+        let saved = [PetPrompt(title: "Catch up", prompt: "what did I miss?")]
+        XCTAssertEqual([PetPrompt].decoded(from: saved.encoded), saved)
     }
 }

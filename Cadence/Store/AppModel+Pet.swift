@@ -12,6 +12,7 @@ extension AppModel {
             openToday: todayRemainingCount(now: now),
             focus: agendaFocus(now: now),
             nextEvent: nextEvent(now: now),
+            justEnded: recentlyEndedEvent(now: now),
             timingMinutes: isTimingAnything ? longestRunningSeconds / 60 : nil,
             breakAdvice: BreakAdvice.decide(
                 timingSeconds: isTimingAnything ? longestRunningSeconds : nil,
@@ -86,6 +87,40 @@ extension AppModel {
             start: candidate.start,
             minutesAway: Int(candidate.start.timeIntervalSince(now) / 60)
         )
+    }
+
+    /// A meeting that finished in the last few minutes and has not been
+    /// answered yet.
+    ///
+    /// Something starting shortly outranks it: being late to the next thing
+    /// matters more than tidying up the last one.
+    func recentlyEndedEvent(now: Date = Date()) -> PetStatus.Event? {
+        if let next = nextEvent(now: now), next.minutesAway <= 10 { return nil }
+        let window = Double(PetStatus.followUpWindowMinutes) * 60
+        let candidate = eventKit.events
+            .filter { event in
+                guard !event.isAllDay, event.end <= now else { return false }
+                guard now.timeIntervalSince(event.end) <= window else { return false }
+                return !answeredEventIDs.contains(event.id)
+            }
+            .max { $0.end < $1.end }
+        guard let candidate else { return nil }
+        return PetStatus.Event(
+            title: candidate.title,
+            start: candidate.start,
+            minutesAway: Int(candidate.start.timeIntervalSince(now) / 60)
+        )
+    }
+
+    /// Stops it asking again about a meeting already dealt with. Called when
+    /// the panel is opened, which is the moment the question was read — whether
+    /// or not anything was typed in reply.
+    func noteEventAnswered(now: Date = Date()) {
+        let window = Double(PetStatus.followUpWindowMinutes) * 60
+        for event in eventKit.events
+        where !event.isAllDay && event.end <= now && now.timeIntervalSince(event.end) <= window {
+            answeredEventIDs.insert(event.id)
+        }
     }
 
     /// Records that the break was mentioned, which starts the cooldown. Called

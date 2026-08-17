@@ -26,11 +26,18 @@ final class PetWindowController: NSObject, NSWindowDelegate {
     private var panel: NSPanel?
     private let model: AppModel
     private let preferences: Preferences
+    /// The same session the chat panel and the unattended runs use, so two
+    /// requests can never fight over the one CLI process.
+    private let session: AgentSession
     private var clockTask: Task<Void, Never>?
+    private var replyTask: Task<Void, Never>?
+    /// The assistant's last answer, kept until the next question replaces it.
+    private var lastReply: String?
 
-    init(model: AppModel, preferences: Preferences) {
+    init(model: AppModel, preferences: Preferences, session: AgentSession) {
         self.model = model
         self.preferences = preferences
+        self.session = session
         super.init()
     }
 
@@ -116,13 +123,15 @@ final class PetWindowController: NSObject, NSWindowDelegate {
                 self?.openMainWindow()
             },
             onToggleTimer: { [weak self] in self?.toggleTimer() },
+            onOpened: { [weak self] in self?.model.noteEventAnswered() },
             onToggleDone: { [weak self] id in
                 self?.model.toggleCompleted(id)
                 self?.refresh()
             },
-            onSubmit: { [weak self] text in
-                self?.capture(text) ?? false
-            }
+            prompts: preferences.petPrompts.filter(\.isUsable),
+            onAsk: { [weak self] text in self?.handle(text) },
+            isThinking: session.status.isRunning,
+            lastReply: lastReply
         )
         let hosting = NSHostingView(rootView: view)
         hosting.autoresizingMask = [.width, .height]
@@ -150,21 +159,71 @@ final class PetWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Same parser the quick-capture panel uses, so `#tag !2 ~45m tomorrow`
-    /// means the same thing typed at the companion as typed anywhere else.
-    private func capture(_ text: String) -> Bool {
-        let parsed = CaptureParser.parse(text)
-        guard !parsed.isEmpty else { return false }
-        model.createTodo(
-            title: parsed.title,
-            tagNames: parsed.tagNames,
-            priority: parsed.priority,
-            estimateMinutes: parsed.estimateMinutes,
-            dueAt: parsed.dueAt,
-            scheduledAt: parsed.scheduledAt
-        )
+    /// One line in, two possible meanings.
+    ///
+    /// Anything that reads as a task becomes one immediately — capture should
+    /// not cost a model call or thirty seconds of waiting. Everything else goes
+    /// to the assistant. Asking the user to pick which they meant would be
+    /// asking them to know how the thing works.
+    private func handle(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if Self.looksLikeATask(trimmed) {
+            let parsed = CaptureParser.parse(trimmed)
+            if !parsed.isEmpty {
+                model.createTodo(
+                    title: parsed.title,
+                    tagNames: parsed.tagNames,
+                    priority: parsed.priority,
+                    estimateMinutes: parsed.estimateMinutes,
+                    dueAt: parsed.dueAt,
+                    scheduledAt: parsed.scheduledAt
+                )
+                lastReply = "Added “\(parsed.title)”."
+                refresh()
+                return
+            }
+        }
+
+        lastReply = nil
+        session.send(trimmed, surface: .chat)
+        observeSession()
         refresh()
-        return true
+    }
+
+    /// A question ends in a question mark, or asks for something to be done.
+    /// A task is a noun phrase. This is a heuristic and it is allowed to be
+    /// wrong: getting it wrong makes a task instead of an answer, which is
+    /// visible and one click to undo.
+    static func looksLikeATask(_ text: String) -> Bool {
+        if text.hasSuffix("?") || text.hasSuffix("？") { return false }
+        // A saved prompt is a sentence; a captured task rarely is.
+        if text.split(separator: " ").count > 12 { return false }
+        let asks = ["plan ", "what ", "when ", "how ", "why ", "show ", "tell ",
+                    "move ", "reschedule ", "summarise ", "summarize ", "check ",
+                    "帮我", "看看", "整理", "安排", "什么", "怎么"]
+        let lowered = text.lowercased()
+        return !asks.contains { lowered.hasPrefix($0) || lowered.contains($0) }
+    }
+
+    /// Watches the shared session so the panel can stop saying "thinking" and
+    /// show what came back. Polled rather than observed: the panel is rebuilt
+    /// wholesale on each refresh, so there is no view to invalidate.
+    private func observeSession() {
+        replyTask?.cancel()
+        replyTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                guard let self, !Task.isCancelled else { return }
+                if !session.status.isRunning {
+                    lastReply = session.messages.last { $0.role == .assistant }?.text
+                    refresh()
+                    return
+                }
+                refresh()
+            }
+        }
     }
 
     private func toggleTimer() {

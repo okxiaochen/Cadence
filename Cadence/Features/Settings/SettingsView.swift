@@ -52,6 +52,42 @@ private struct PlanningSettings: View {
                     Picker("Suggest a break after", selection: $preferences.breakAfterMinutes) {
                         ForEach([25, 40, 50, 60, 90], id: \.self) { Text("\($0)m").tag($0) }
                     }
+
+                    LabeledContent("Buttons") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach($preferences.petPrompts) { $saved in
+                                HStack(spacing: 6) {
+                                    TextField("Label", text: $saved.title)
+                                        .frame(width: 90)
+                                    TextField("What to ask", text: $saved.prompt)
+                                    Button {
+                                        preferences.petPrompts.removeAll { $0.id == saved.id }
+                                    } label: {
+                                        Image(systemName: "minus.circle")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.secondary)
+                                }
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption)
+                            }
+
+                            Button("Add a button") {
+                                preferences.petPrompts.append(
+                                    PetPrompt(title: "", prompt: "")
+                                )
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+
+                    Text("Each button sends its text to the assistant. What is "
+                         + "worth asking depends on what you have connected — "
+                         + "\u{201C}what did I miss today?\u{201D} means something "
+                         + "different with a ticket tracker attached — so these "
+                         + "are yours to write rather than a fixed list.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Text("A small window that stays on the desktop. Point at it for "

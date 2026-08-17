@@ -156,6 +156,9 @@ final class AppModel {
     /// stored: a cooldown is about not repeating yourself in one sitting, and
     /// relaunching the app is a different sitting.
     var lastBreakSuggestedAt: Date?
+    /// Meetings the companion has already asked about. In memory for the same
+    /// reason: it is about not repeating yourself in one sitting.
+    var answeredEventIDs: Set<String> = []
 
     init(database: AppDatabase) {
         self.database = database
