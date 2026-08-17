@@ -29,6 +29,7 @@ final class PetWindowController: NSObject, NSWindowDelegate {
     /// The same session the chat panel and the unattended runs use, so two
     /// requests can never fight over the one CLI process.
     private let session: AgentSession
+    let presence = PresenceTracker()
 
     init(model: AppModel, preferences: Preferences, session: AgentSession) {
         self.model = model
@@ -43,9 +44,11 @@ final class PetWindowController: NSObject, NSWindowDelegate {
         let panel = self.panel ?? makePanel()
         self.panel = panel
         panel.orderFrontRegardless()
+        presence.start()
     }
 
     func hide() {
+        presence.stop()
         panel?.orderOut(nil)
     }
 
@@ -91,6 +94,7 @@ final class PetWindowController: NSObject, NSWindowDelegate {
             model: model,
             preferences: preferences,
             session: session,
+            presence: presence,
             onOpen: { [weak self] in
                 NSApp.activate(ignoringOtherApps: true)
                 self?.openMainWindow()

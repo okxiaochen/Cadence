@@ -52,6 +52,14 @@ private struct PlanningSettings: View {
                     Picker("Suggest a break after", selection: $preferences.breakAfterMinutes) {
                         ForEach([25, 40, 50, 60, 90], id: \.self) { Text("\($0)m").tag($0) }
                     }
+                    Picker("Suggest standing up after", selection: $preferences.moveAfterMinutes) {
+                        Text("Never").tag(0)
+                        ForEach([30, 45, 50, 60, 90], id: \.self) { Text("\($0)m").tag($0) }
+                    }
+                    Picker("Suggest water every", selection: $preferences.waterAfterMinutes) {
+                        Text("Never").tag(0)
+                        ForEach([45, 60, 90, 120], id: \.self) { Text("\($0)m").tag($0) }
+                    }
 
                     LabeledContent("Buttons") {
                         VStack(alignment: .leading, spacing: 6) {

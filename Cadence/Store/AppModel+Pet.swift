@@ -7,7 +7,11 @@ import Foundation
 /// same calendar the window and the status item already use.
 extension AppModel {
 
-    func petStatus(now: Date = Date(), breakAfterMinutes: Int = 50) -> PetStatus {
+    func petStatus(
+        now: Date = Date(),
+        breakAfterMinutes: Int = 50,
+        nudge: PetNudge = .none
+    ) -> PetStatus {
         PetStatus(
             openToday: todayRemainingCount(now: now),
             focus: agendaFocus(now: now),
@@ -20,6 +24,7 @@ extension AppModel {
                 lastSuggestedAt: lastBreakSuggestedAt,
                 now: now
             ),
+            nudge: nudge,
             today: todayLines(now: now)
         )
     }

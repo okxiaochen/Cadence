@@ -21,6 +21,7 @@ struct PetView: View {
     let model: AppModel
     let preferences: Preferences
     let session: AgentSession
+    let presence: PresenceTracker
     var onOpen: () -> Void
 
     /// Ticks so the clock-dependent parts stay current. One state change a
@@ -28,7 +29,22 @@ struct PetView: View {
     @State private var now = Date()
 
     private var status: PetStatus {
-        model.petStatus(now: now, breakAfterMinutes: preferences.breakAfterMinutes)
+        model.petStatus(
+            now: now,
+            breakAfterMinutes: preferences.breakAfterMinutes,
+            nudge: nudge
+        )
+    }
+
+    private var nudge: PetNudge {
+        PetNudge.decide(
+            sittingMinutes: presence.sittingMinutes,
+            minutesSinceWater: presence.minutesSinceWater,
+            moveAfter: preferences.moveAfterMinutes,
+            waterAfter: preferences.waterAfterMinutes,
+            lastNudgedAt: presence.lastNudgedAt,
+            now: now
+        )
     }
 
     private var prompts: [PetPrompt] { preferences.petPrompts.filter(\.isUsable) }
@@ -81,6 +97,10 @@ struct PetView: View {
                 panel
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .onHover { isOverPanel = $0; setOpen() }
+            } else if status.nudge.isSomething {
+                // Answerable, because a reminder you cannot reply to is one you
+                // get again in twenty minutes whether or not you acted on it.
+                nudgeBubble(status.nudge).transition(.opacity)
             } else if status.wantsAttention {
                 bubble(status.headline).transition(.opacity)
             }
@@ -544,6 +564,32 @@ struct PetView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .contentShape(Rectangle())
+    }
+
+    private func nudgeBubble(_ nudge: PetNudge) -> some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            Text(nudge.message ?? "")
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                switch nudge {
+                case .water:
+                    Button("Had one") { presence.noteWater() }
+                case .move, .none:
+                    // Standing up clears itself once they are actually away —
+                    // this is for saying "not now" without getting up.
+                    Button("Later") { presence.noteNudged() }
+                }
+            }
+            .buttonStyle(.link)
+            .font(.caption2)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(.quaternary))
+        .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+        .frame(maxWidth: 220, alignment: .trailing)
     }
 
     private func bubble(_ text: String) -> some View {

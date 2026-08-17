@@ -27,6 +27,8 @@ final class Preferences {
         showsDesktopPet = defaults.bool(forKey: Key.pet, default: false)
         breakAfterMinutes = defaults.integer(forKey: Key.breakAfter, default: 50)
         petPrompts = .decoded(from: defaults.data(forKey: Key.petPrompts))
+        moveAfterMinutes = defaults.integer(forKey: Key.moveAfter, default: 50)
+        waterAfterMinutes = defaults.integer(forKey: Key.waterAfter, default: 90)
         backgroundStyle = BackgroundStyle(
             rawValue: defaults.string(forKey: Key.backgroundStyle) ?? ""
         ) ?? .solid
@@ -81,6 +83,11 @@ final class Preferences {
     var breakAfterMinutes: Int {
         didSet { defaults.set(breakAfterMinutes, forKey: Key.breakAfter) }
     }
+
+    /// Minutes at the desk before it suggests standing up. 0 turns it off.
+    var moveAfterMinutes: Int { didSet { defaults.set(moveAfterMinutes, forKey: Key.moveAfter) } }
+    /// Minutes present between water suggestions. 0 turns it off.
+    var waterAfterMinutes: Int { didSet { defaults.set(waterAfterMinutes, forKey: Key.waterAfter) } }
 
     /// Saved questions, shown as buttons on the companion.
     var petPrompts: [PetPrompt] {
@@ -205,6 +212,8 @@ final class Preferences {
         static let breakAfter = "breakAfterMinutes"
         static let petOrigin = "petWindowOrigin"
         static let petPrompts = "petPrompts"
+        static let moveAfter = "moveAfterMinutes"
+        static let waterAfter = "waterAfterMinutes"
         static let backgroundStyle = "backgroundStyle"
         static let backgroundOpacity = "backgroundOpacity"
         static let appearance = "appAppearance"

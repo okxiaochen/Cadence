@@ -20,6 +20,8 @@ struct PetStatus: Equatable {
     /// Minutes on the clock right now, if anything is being timed.
     var timingMinutes: Int?
     var breakAdvice: BreakAdvice
+    /// Something about the body rather than the work.
+    var nudge: PetNudge = .none
 
     /// Today, as one list.
     ///
@@ -63,6 +65,7 @@ struct PetStatus: Equatable {
 
     var mood: Mood {
         if breakAdvice.isDue { return .restDue }
+        if case .move = nudge { return .restDue }
         if timingMinutes != nil { return .working }
         switch focus {
         case .overdue: return .behind
@@ -122,6 +125,7 @@ extension PetStatus {
         if case .due(let worked) = breakAdvice {
             return "\(Format.duration(worked)) without a break."
         }
+        if let message = nudge.message { return message }
         // Being late to the next thing matters more than tidying up the last
         // one, so this order is the other way round from how they were added.
         if let event = nextEvent {
