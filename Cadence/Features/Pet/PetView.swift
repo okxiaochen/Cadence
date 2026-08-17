@@ -488,11 +488,9 @@ struct PetView: View {
                                 Text(message.role == .user ? "You" : "Cadence")
                                     .font(.caption2.weight(.medium))
                                     .foregroundStyle(.tertiary)
-                                Text(message.text)
-                                    .font(.caption)
+                                MarkdownText(source: message.text)
                                     .foregroundStyle(message.isError ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
                                     .textSelection(.enabled)
-                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .id(message.id)

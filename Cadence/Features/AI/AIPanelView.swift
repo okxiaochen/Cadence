@@ -234,7 +234,9 @@ private struct MessageBubble: View {
                 .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
                 .frame(maxWidth: .infinity, alignment: .trailing)
         case .assistant:
-            Text(message.text)
+            // The assistant writes markdown, and the chat panel was showing it
+            // as punctuation for the same reason the companion was.
+            MarkdownText(source: message.text, font: .body)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .system:
