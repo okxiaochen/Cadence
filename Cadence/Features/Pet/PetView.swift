@@ -33,8 +33,11 @@ struct PetView: View {
 
     private var prompts: [PetPrompt] { preferences.petPrompts.filter(\.isUsable) }
     private var isThinking: Bool { session.status.isRunning }
-    private var lastReply: String? {
-        session.messages.last { $0.role == .assistant && !$0.isError }?.text
+    /// The exchange so far, newest last. Shown rather than just the final
+    /// reply: an answer with no question above it cannot be argued with, and
+    /// arguing is most of what a plan needs.
+    private var thread: [ChatMessage] {
+        Array(session.messages.filter { $0.role != .system }.suffix(8))
     }
 
     @State private var isOverFace = false
@@ -303,7 +306,10 @@ struct PetView: View {
                 }
                 // A fixed height, not a maximum: a panel that resizes as the
                 // day fills up moves under the pointer.
-                .frame(height: min(CGFloat(status.today.count) * 30 + 8, 240))
+                // Shorter once there is a conversation to make room for, so
+                // the panel does not grow past the screen.
+                .frame(height: min(CGFloat(status.today.count) * 30 + 8,
+                                   thread.isEmpty ? 240 : 110))
             }
 
             Divider()
@@ -339,14 +345,8 @@ struct PetView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
             } else {
-                if let lastReply, !lastReply.isEmpty {
-                    Text(lastReply)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(4)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 12)
-                        .padding(.top, 8)
+                if !thread.isEmpty {
+                    conversation
                 }
 
                 // One field for both: a line that parses as a task becomes one
@@ -355,7 +355,8 @@ struct PetView: View {
                 // to know how it works.
                 HStack(spacing: 6) {
                     Image(systemName: "sparkle").foregroundStyle(.secondary)
-                    TextField("Add a task, or ask…", text: $draft)
+                    TextField(thread.isEmpty ? "Add a task, or ask…" : "Reply…",
+                              text: $draft)
                         .textFieldStyle(.plain)
                         .font(.caption)
                         .focused($isTyping)
@@ -374,6 +375,54 @@ struct PetView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary))
         .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+    }
+
+    /// Scrolls, and follows the newest message. The first version truncated
+    /// the reply at four lines with no way to see the rest, which is a poor
+    /// answer to a paragraph explaining why it could not do what was asked.
+    private var conversation: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider()
+            HStack {
+                Text("Conversation")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button("Clear") { session.startNewConversation() }
+                    .buttonStyle(.link)
+                    .font(.caption2)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 7)
+
+            ScrollViewReader { scroller in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(thread) { message in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(message.role == .user ? "You" : "Cadence")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.tertiary)
+                                Text(message.text)
+                                    .font(.caption)
+                                    .foregroundStyle(message.isError ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .id(message.id)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+                .frame(maxHeight: 170)
+                .onChange(of: thread.count) { _, _ in
+                    withAnimation { scroller.scrollTo(thread.last?.id, anchor: .bottom) }
+                }
+                .onAppear { scroller.scrollTo(thread.last?.id, anchor: .bottom) }
+            }
+        }
     }
 
     private func row(_ line: PetStatus.Line) -> some View {

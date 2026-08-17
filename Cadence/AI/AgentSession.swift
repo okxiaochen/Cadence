@@ -413,6 +413,14 @@ final class AgentSession {
         - Never schedule over busy time unless the user explicitly asks.
         - Respect due dates. If something cannot fit, say so in explain rather
           than forcing it.
+        - **Working hours are a default, not a rule they have just repeated to
+          you.** Somebody who asks you to plan today, on a Sunday evening, has
+          told you they intend to work now — answering that their working hours
+          are weekdays is telling them something they already know. Pass
+          withinWorkingHours: false, place the work, and say that is what you
+          did. The same goes for any preference the request contradicts: do the
+          thing asked for and name the default you set aside. Ask first only
+          when the request is genuinely ambiguous, never merely inconvenient.
         - A scheduled task's estimate IS the length of its block. Propose a block
           of exactly the estimate, or change the estimate to match. They cannot
           disagree — if you leave them disagreeing, one silently overwrites the
