@@ -43,7 +43,37 @@ struct PetPrompt: Identifiable, Codable, Hashable {
             + "Overdue first, use find_free_slots, and leave room."
     )
 
-    static let defaults: [PetPrompt] = [planToday]
+    /// Checks the weather and says nothing most of the time.
+    ///
+    /// The command is named in the prompt rather than run behind the scenes:
+    /// the first run asks to be allowed, once, and after that it is one of
+    /// yours — visible under Allowed commands and revocable there.
+    static let weather = PetPrompt(
+        id: "weather",
+        title: "Weather",
+        prompt: "Use run_command with: curl -s 'wttr.in/?format=j1'\n\n"
+            + "Tell me only about something I would act on — rain arriving "
+            + "before I go out, a severe alert, a big swing in temperature. "
+            + "Not the forecast, and not that it is unchanged.",
+        everyMinutes: 120
+    )
+
+    /// The feed is a starting point and meant to be replaced; what it is
+    /// filtered *against* is the interesting part, and that lives in memory
+    /// rather than here, because it is different for everybody.
+    static let news = PetPrompt(
+        id: "news",
+        title: "News",
+        prompt: "Use run_command with: curl -s "
+            + "'https://feeds.bbci.co.uk/news/world/rss.xml'\n\n"
+            + "First call search_memories for what I care about. Tell me only "
+            + "what touches it, or what would change my plans. If nothing "
+            + "does, say nothing — a headline I would not have looked up is "
+            + "not worth interrupting me for.",
+        everyMinutes: 240
+    )
+
+    static let defaults: [PetPrompt] = [planToday, weather, news]
 
     /// The word a scheduled prompt answers with when there is nothing worth
     /// interrupting for.

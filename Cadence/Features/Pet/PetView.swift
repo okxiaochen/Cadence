@@ -72,6 +72,9 @@ struct PetView: View {
     @State private var closing: Task<Void, Never>?
     @State private var draft = ""
     @State private var breathing = false
+    /// Set when a run finishes while nobody is looking, so its result gets a
+    /// bubble instead of being silently waiting behind a closed panel.
+    @State private var unreadReply: String?
     @FocusState private var isTyping: Bool
 
     /// Opens at once, closes after a beat.
@@ -80,9 +83,13 @@ struct PetView: View {
     /// points of empty space leaves both, and without it the panel would shut
     /// on the way to the thing you were reaching for.
     private func setOpen() {
-        // `isThinking` belongs here as a floor: a request that outlives its
-        // own panel is one whose answer nobody sees.
-        let wanted = isOverFace || isOverPanel || isPinned || isTyping || isThinking
+        // `isThinking` is deliberately *not* here. It was, on the reasoning
+        // that an answer nobody sees is wasted — but that assumed every run
+        // was short. A booking that waits for a slot can run for an hour, and
+        // a panel that cannot be dismissed until it finishes is a panel that
+        // owns the corner of your screen. It closes; the answer comes back as
+        // a bubble.
+        let wanted = isOverFace || isOverPanel || isPinned || isTyping
         closing?.cancel()
         guard !wanted else { return isOpen = true }
         closing = Task {
@@ -98,6 +105,8 @@ struct PetView: View {
                 panel
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .onHover { isOverPanel = $0; setOpen() }
+            } else if let unreadReply {
+                unreadBubble(unreadReply).transition(.opacity)
             } else if let announcement = scheduled.announcement {
                 // What a scheduled question came back with. Above the body
                 // nudges: this one was asked for, even if not just now.
@@ -125,7 +134,15 @@ struct PetView: View {
             setOpen()
         }
         .onChange(of: isOpen) { _, open in if open { model.noteEventAnswered() } }
-        .onChange(of: isThinking) { _, _ in setOpen() }
+        .onChange(of: isThinking) { _, nowThinking in
+            // Finished while closed: say so rather than leaving the answer
+            // behind a panel nobody has a reason to open.
+            if !nowThinking, !isOpen, session.messages.last?.role == .assistant {
+                unreadReply = session.messages.last?.text
+            }
+            setOpen()
+        }
+        .onChange(of: isOpen) { _, open in if open { unreadReply = nil } }
         .onExitCommand {
             isPinned = false
             isTyping = false
@@ -303,9 +320,9 @@ struct PetView: View {
                 Button(status.timingMinutes == nil ? "Start" : "Stop") { toggleTimer() }
                     .buttonStyle(.link)
                     .font(.caption)
-                if isPinned {
-                    // Only while pinned: otherwise it is a control for undoing
-                    // something the pointer already does by leaving.
+                if isPinned || isThinking {
+                    // Visible while thinking too: a long run is exactly when
+                    // somebody needs the corner of their screen back.
                     Button {
                         isPinned = false
                         isTyping = false
@@ -570,6 +587,33 @@ struct PetView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .contentShape(Rectangle())
+    }
+
+    /// The first line of an answer that arrived while the panel was shut, and
+    /// nothing more — the rest is one click away, and a bubble that quotes a
+    /// paragraph at somebody who is working is the interruption this avoids.
+    private func unreadBubble(_ text: String) -> some View {
+        let firstLine = text
+            .components(separatedBy: .newlines)
+            .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? text
+
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(firstLine)
+                .font(.caption)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Click to read")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: 220, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(.quaternary))
+        .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+        .contentShape(Rectangle())
+        .onTapGesture { isPinned = true; setOpen() }
     }
 
     private func announcementBubble(_ title: String?, _ text: String) -> some View {

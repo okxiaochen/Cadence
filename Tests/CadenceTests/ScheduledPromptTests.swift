@@ -75,3 +75,40 @@ final class ScheduledPromptTests: XCTestCase {
         XCTAssertTrue(sent.localizedCaseInsensitiveContains("earn the interruption"))
     }
 }
+
+/// The prompts that ship, and what happens to somebody who already had a list.
+final class DefaultPromptTests: XCTestCase {
+
+    func testWeatherAndNewsShipAndRunOnTheirOwn() {
+        let ids = Set(PetPrompt.defaults.map(\.id))
+        XCTAssertTrue(ids.contains("weather"))
+        XCTAssertTrue(ids.contains("news"))
+        for saved in PetPrompt.defaults where saved.id != "plan-today" {
+            XCTAssertTrue(saved.isScheduled, "\(saved.id) should have a cadence")
+        }
+    }
+
+    /// Both are useless without a command, and the command has to be allowed
+    /// once. Naming it in the prompt is what makes that a single visible
+    /// approval rather than something happening off screen.
+    func testEachFetchingPromptNamesTheCommandItNeeds() {
+        for saved in [PetPrompt.weather, PetPrompt.news] {
+            XCTAssertTrue(saved.prompt.contains("run_command"), saved.id)
+            XCTAssertTrue(saved.prompt.contains("curl"), saved.id)
+        }
+    }
+
+    /// Otherwise every cadence is a subscription to noise.
+    func testEachScheduledDefaultIsToldWhenToSayNothing() {
+        for saved in PetPrompt.defaults where saved.isScheduled {
+            let sent = MainActor.assumeIsolated { ScheduledPrompts.wrap(saved.prompt) }
+            XCTAssertTrue(sent.contains(PetPrompt.silence), saved.id)
+        }
+    }
+
+    /// News is filtered against what the assistant knows about the person,
+    /// not against a topic list baked into the app — everybody's is different.
+    func testNewsIsFilteredAgainstMemoryRatherThanAFixedList() {
+        XCTAssertTrue(PetPrompt.news.prompt.contains("search_memories"))
+    }
+}

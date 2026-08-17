@@ -36,6 +36,16 @@ final class Preferences {
         appAppearance = AppAppearance(
             rawValue: defaults.string(forKey: Key.appearance) ?? ""
         ) ?? .system
+
+        // Ones added after somebody already had a list of their own. Keyed on a
+        // flag rather than on absence, so deleting one is permanent — offering
+        // it back every launch would be the app arguing with them.
+        if !defaults.bool(forKey: Key.seededPrompts) {
+            let known = Set(petPrompts.map(\.id))
+            petPrompts += PetPrompt.defaults.filter { !known.contains($0.id) }
+            defaults.set(true, forKey: Key.seededPrompts)
+            defaults.set(petPrompts.encoded, forKey: Key.petPrompts)
+        }
     }
 
     // MARK: - Planning
@@ -214,6 +224,7 @@ final class Preferences {
         static let petPrompts = "petPrompts"
         static let moveAfter = "moveAfterMinutes"
         static let waterAfter = "waterAfterMinutes"
+        static let seededPrompts = "petPromptsSeeded"
         static let backgroundStyle = "backgroundStyle"
         static let backgroundOpacity = "backgroundOpacity"
         static let appearance = "appAppearance"
