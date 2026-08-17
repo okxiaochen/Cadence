@@ -290,13 +290,13 @@ final class PetInputTests: XCTestCase {
 
     func testAPlainNounPhraseIsATask() {
         for text in ["Buy milk", "Fix the flaky scheduler test", "Renew TLS cert #ops ~30m"] {
-            XCTAssertTrue(PetWindowController.looksLikeATask(text), text)
+            XCTAssertTrue(PetView.looksLikeATask(text), text)
         }
     }
 
     func testAQuestionIsNot() {
         for text in ["what should I do next?", "有什么没做完的？"] {
-            XCTAssertFalse(PetWindowController.looksLikeATask(text), text)
+            XCTAssertFalse(PetView.looksLikeATask(text), text)
         }
     }
 
@@ -307,7 +307,7 @@ final class PetInputTests: XCTestCase {
             "帮我看看今天还有什么",
             "整理一下未读消息"
         ] {
-            XCTAssertFalse(PetWindowController.looksLikeATask(text), text)
+            XCTAssertFalse(PetView.looksLikeATask(text), text)
         }
     }
 
@@ -315,7 +315,7 @@ final class PetInputTests: XCTestCase {
     func testSomethingLongIsAskedRatherThanCaptured() {
         let sentence = "go through everything assigned to me and tell me which "
             + "of it actually matters before the end of this week"
-        XCTAssertFalse(PetWindowController.looksLikeATask(sentence))
+        XCTAssertFalse(PetView.looksLikeATask(sentence))
     }
 
     // MARK: - Saved buttons

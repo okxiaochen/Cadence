@@ -11,21 +11,31 @@ import SwiftUI
 /// 0.0%. So it breathes in short bursts with long gaps rather than forever, and
 /// stops entirely while the panel is open — nothing should be moving under text
 /// somebody is reading.
+/// Built once and left alone.
+///
+/// The first version rebuilt the whole hosting view on every refresh, which
+/// threw away every piece of `@State` it owned — the pin, the hover, and a
+/// half-typed line — once a minute and after every action. Reading the model
+/// directly means SwiftUI updates what changed and keeps the rest.
 struct PetView: View {
-    var status: PetStatus
+    let model: AppModel
+    let preferences: Preferences
+    let session: AgentSession
     var onOpen: () -> Void
-    var onToggleTimer: () -> Void
-    /// Fired when the panel opens, so a question that has been read stops being
-    /// asked.
-    var onOpened: () -> Void
-    var onToggleDone: (String) -> Void
-    /// Saved questions, shown as buttons.
-    var prompts: [PetPrompt]
-    /// Sends something to the assistant.
-    var onAsk: (String) -> Void
-    /// Whether the assistant is busy, and its last reply if there is one.
-    var isThinking: Bool
-    var lastReply: String?
+
+    /// Ticks so the clock-dependent parts stay current. One state change a
+    /// minute, which is all the companion's own precision needs.
+    @State private var now = Date()
+
+    private var status: PetStatus {
+        model.petStatus(now: now, breakAfterMinutes: preferences.breakAfterMinutes)
+    }
+
+    private var prompts: [PetPrompt] { preferences.petPrompts.filter(\.isUsable) }
+    private var isThinking: Bool { session.status.isRunning }
+    private var lastReply: String? {
+        session.messages.last { $0.role == .assistant && !$0.isError }?.text
+    }
 
     @State private var isOverFace = false
     @State private var isOverPanel = false
@@ -42,7 +52,9 @@ struct PetView: View {
     /// points of empty space leaves both, and without it the panel would shut
     /// on the way to the thing you were reaching for.
     private func setOpen() {
-        let wanted = isOverFace || isOverPanel || isPinned || isTyping
+        // `isThinking` belongs here as a floor: a request that outlives its
+        // own panel is one whose answer nobody sees.
+        let wanted = isOverFace || isOverPanel || isPinned || isTyping || isThinking
         closing?.cancel()
         guard !wanted else { return isOpen = true }
         closing = Task {
@@ -75,8 +87,21 @@ struct PetView: View {
             if typing { isPinned = true }
             setOpen()
         }
-        .onChange(of: isOpen) { _, open in if open { onOpened() } }
+        .onChange(of: isOpen) { _, open in if open { model.noteEventAnswered() } }
+        .onChange(of: isThinking) { _, _ in setOpen() }
+        .onExitCommand {
+            isPinned = false
+            isTyping = false
+            setOpen()
+        }
         .task { await breathe() }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                guard !Task.isCancelled else { return }
+                now = Date()
+            }
+        }
     }
 
     /// Short movement, long stillness — and none at all while the panel is up.
@@ -91,6 +116,70 @@ struct PetView: View {
             try? await Task.sleep(nanoseconds: 550_000_000)
             withAnimation(.easeInOut(duration: 0.55)) { breathing = false }
         }
+    }
+
+    /// Asking pins the panel.
+    ///
+    /// A run takes twenty seconds to a minute, and the pointer does not stay
+    /// still that long. Without this, asking for something and then moving the
+    /// mouse loses both the progress and the answer — you would have to ask
+    /// again to find out what happened the first time.
+    ///
+    /// It stays pinned afterwards rather than closing on its own: the reply is
+    /// the reason the question was asked, and a panel that clears itself while
+    /// you are reading is the same bug one step later.
+    private func ask(_ text: String) {
+        isPinned = true
+        setOpen()
+        handle(text)
+    }
+
+    /// One line in, two possible meanings. Anything that reads as a task
+    /// becomes one immediately — capture should not cost a model call and half
+    /// a minute of waiting — and everything else is a question.
+    private func handle(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if PetView.looksLikeATask(trimmed) {
+            let parsed = CaptureParser.parse(trimmed)
+            if !parsed.isEmpty {
+                model.createTodo(
+                    title: parsed.title,
+                    tagNames: parsed.tagNames,
+                    priority: parsed.priority,
+                    estimateMinutes: parsed.estimateMinutes,
+                    dueAt: parsed.dueAt,
+                    scheduledAt: parsed.scheduledAt
+                )
+                return
+            }
+        }
+        session.send(trimmed, surface: .chat)
+    }
+
+    private func toggleTimer() {
+        if let running = model.runningEntries.first {
+            model.stopTimer(for: running.taskID)
+        } else if case .underway(let item) = model.agendaFocus() {
+            model.toggleTimer(for: item.todo.id)
+        } else if case .next(let item) = model.agendaFocus() {
+            model.toggleTimer(for: item.todo.id)
+        }
+    }
+
+    /// A question ends in a question mark, or asks for something to be done; a
+    /// task is a noun phrase. Allowed to be wrong, and leaning towards capture:
+    /// guessing that way makes a visible task and one click to undo, guessing
+    /// the other costs half a minute of waiting.
+    static func looksLikeATask(_ text: String) -> Bool {
+        if text.hasSuffix("?") || text.hasSuffix("？") { return false }
+        if text.split(separator: " ").count > 12 { return false }
+        let asks = ["plan ", "what ", "when ", "how ", "why ", "show ", "tell ",
+                    "move ", "reschedule ", "summarise ", "summarize ", "check ",
+                    "帮我", "看看", "整理", "安排", "什么", "怎么"]
+        let lowered = text.lowercased()
+        return !asks.contains { lowered.hasPrefix($0) || lowered.contains($0) }
     }
 
     // MARK: - The face
@@ -174,9 +263,23 @@ struct PetView: View {
                     .font(.callout.weight(.medium))
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
-                Button(status.timingMinutes == nil ? "Start" : "Stop", action: onToggleTimer)
+                Button(status.timingMinutes == nil ? "Start" : "Stop") { toggleTimer() }
                     .buttonStyle(.link)
                     .font(.caption)
+                if isPinned {
+                    // Only while pinned: otherwise it is a control for undoing
+                    // something the pointer already does by leaving.
+                    Button {
+                        isPinned = false
+                        isTyping = false
+                        setOpen()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close")
+                }
             }
             .padding(.horizontal, 12)
             .padding(.top, 11)
@@ -211,7 +314,7 @@ struct PetView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(prompts) { saved in
-                            Button(saved.title) { onAsk(saved.prompt) }
+                            Button(saved.title) { ask(saved.prompt) }
                                 .buttonStyle(.borderless)
                                 .font(.caption2)
                                 .padding(.horizontal, 8)
@@ -259,7 +362,7 @@ struct PetView: View {
                         .onSubmit {
                             let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
                             guard !text.isEmpty else { return }
-                            onAsk(text)
+                            ask(text)
                             draft = ""
                         }
                 }
@@ -277,7 +380,7 @@ struct PetView: View {
         HStack(spacing: 7) {
             switch line.kind {
             case .task:
-                Button { onToggleDone(line.id) } label: {
+                Button { model.toggleCompleted(line.id) } label: {
                     Image(systemName: line.isDone ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(line.isDone ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 }
