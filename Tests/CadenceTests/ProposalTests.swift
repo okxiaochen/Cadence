@@ -260,6 +260,28 @@ final class ProposalTests: XCTestCase {
         XCTAssertEqual(updated?.title, "Keep my title")
     }
 
+    /// Found by watching it plan: every slot for an overdue task was refused
+    /// as "after the task's due date", which is true of every slot there will
+    /// ever be. Ten overdue tasks stayed overdue because nothing could be
+    /// scheduled for any of them.
+    func testWorkThatIsAlreadyLateCanStillBeScheduled() throws {
+        let todo = try insert("Overdue", dueAt: now.addingTimeInterval(-5 * 86_400))
+        let reviewed = try review([
+            .createBlock(id: "b", taskID: todo.id, interval: hour(1))
+        ])
+        XCTAssertNil(reviewed.first?.rejection, "a missed deadline is a fact, not a veto")
+    }
+
+    /// The rule still does its job where it can: proposing Saturday for a
+    /// Friday deadline is a mistake worth catching.
+    func testWorkNotYetLateStillCannotBeScheduledPastItsDeadline() throws {
+        let todo = try insert("Due tomorrow", dueAt: now.addingTimeInterval(86_400))
+        let reviewed = try review([
+            .createBlock(id: "b", taskID: todo.id, interval: hour(72))
+        ])
+        XCTAssertEqual(reviewed.first?.rejection, "After the task's due date")
+    }
+
     // MARK: - Importing the same work item twice
 
     private func applyImport(_ draft: TaskDraft, id: String = UUID().uuidString) throws -> Int {

@@ -32,6 +32,14 @@ struct PetView: View {
     }
 
     private var prompts: [PetPrompt] { preferences.petPrompts.filter(\.isUsable) }
+
+    /// The day shrinks to make room for whatever else has to be read. A panel
+    /// that grows past the screen shows less, not more.
+    private var listHeight: CGFloat {
+        let hasProposal = session.proposal.map { !$0.isEmpty } ?? false
+        if hasProposal { return 90 }
+        return thread.isEmpty ? 240 : 110
+    }
     private var isThinking: Bool { session.status.isRunning }
     /// The exchange so far, newest last. Shown rather than just the final
     /// reply: an answer with no question above it cannot be argued with, and
@@ -309,7 +317,7 @@ struct PetView: View {
                 // Shorter once there is a conversation to make room for, so
                 // the panel does not grow past the screen.
                 .frame(height: min(CGFloat(status.today.count) * 30 + 8,
-                                   thread.isEmpty ? 240 : 110))
+                                   listHeight))
             }
 
             Divider()
@@ -345,6 +353,14 @@ struct PetView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
             } else {
+                // Before the prose. A plan explained in a paragraph has to be
+                // read and believed; the same plan as a list of blocks with
+                // times can be checked at a glance — and these are the actual
+                // staged changes rather than a retelling of them.
+                if let proposal = session.proposal, !proposal.isEmpty {
+                    review(proposal)
+                }
+
                 if !thread.isEmpty {
                     conversation
                 }
@@ -375,6 +391,75 @@ struct PetView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary))
         .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+    }
+
+    /// What was actually staged, and the two buttons that decide its fate.
+    ///
+    /// This is the half that was missing: it planned the evening and nothing
+    /// reached the task list, because the only place a proposal could be
+    /// accepted was the main window. Being told a plan and having no way to say
+    /// yes to it from where you were told is not a plan, it is a description.
+    private func review(_ proposal: Proposal) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider()
+            HStack {
+                Text("Proposed")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button("Discard") { session.discardProposal() }
+                    .buttonStyle(.link)
+                    .font(.caption2)
+                Button("Accept") { session.applyProposal() }
+                    .buttonStyle(.link)
+                    .font(.caption2.weight(.semibold))
+                    .disabled(proposal.applicableChanges.isEmpty)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 7)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(proposal.changes) { reviewed in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            if reviewed.isApplicable {
+                                Toggle(isOn: Binding(
+                                    get: { reviewed.isAccepted },
+                                    set: { session.setAccepted($0, for: reviewed.id) }
+                                )) { EmptyView() }
+                                    .toggleStyle(.checkbox)
+                                    .labelsHidden()
+                                    .controlSize(.mini)
+                            } else {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(reviewed.summary)
+                                    .font(.caption)
+                                    .strikethrough(!reviewed.isApplicable)
+                                if let detail = reviewed.detail, !detail.isEmpty {
+                                    Text(detail)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if let rejection = reviewed.rejection {
+                                    Text(rejection)
+                                        .font(.caption2)
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .frame(maxHeight: 150)
+        }
     }
 
     /// Scrolls, and follows the newest message. The first version truncated

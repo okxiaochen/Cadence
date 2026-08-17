@@ -287,7 +287,15 @@ enum ProposalValidator {
         }
         if let dueAt = todo.dueAt {
             let endOfDue = environment.calendar.startOfDay(for: dueAt).addingTimeInterval(86_400)
-            if interval.end > endOfDue { return "After the task's due date" }
+            // Only for work that has not already missed it. A deadline in the
+            // past cannot be protected by refusing to schedule around it — the
+            // task is late either way, and rejecting every slot is how ten
+            // overdue tasks stay overdue forever. The rule is meant to catch
+            // planning a Friday deadline for Saturday, which is still a
+            // mistake; missing one last week is a fact.
+            if endOfDue > environment.now, interval.end > endOfDue {
+                return "After the task's due date"
+            }
         }
         return nil
     }
