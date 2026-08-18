@@ -2,13 +2,20 @@ import Foundation
 import GRDB
 
 /// Something worth remembering between runs: a preference, a project, a goal,
-/// a constraint. Deliberately *not* a transcript — no task contents, no
-/// history, just the durable facts that should shape future planning.
+/// a constraint, or something they simply care about. Deliberately *not* a
+/// transcript — no task contents, no history, just the durable facts.
+///
+/// `interest` is the odd one and the reason the companion works at all. The
+/// others exist to plan well; an interest exists so there is something to say
+/// that the person would actually want to hear. Without it, everything learned
+/// about somebody outside their work has nowhere to be filed and is thrown
+/// away — which is how an assistant that has talked to you for a year still
+/// opens with the weather.
 struct Memory: Identifiable, Codable, Hashable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "memory"
 
     enum Category: String, Codable, CaseIterable, Hashable {
-        case preference, project, goal, constraint, routine, person
+        case preference, project, goal, constraint, routine, person, interest
 
         var title: String {
             switch self {
@@ -18,6 +25,7 @@ struct Memory: Identifiable, Codable, Hashable, FetchableRecord, PersistableReco
             case .constraint: "Constraint"
             case .routine: "Routine"
             case .person: "Person"
+            case .interest: "Interest"
             }
         }
     }

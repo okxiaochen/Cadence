@@ -14,6 +14,7 @@ struct CadenceApp: App {
     @State private var startupError: String?
 
     @AppStorage("workspaceMode") private var mode: WorkspaceMode = .list
+    @AppStorage("workspace") private var workspace: Workspace = .chat
 
     /// `@AppStorage` rather than a Binding built from Preferences: a computed
     /// property hands `MenuBarExtra` a freshly constructed Binding on every
@@ -179,12 +180,35 @@ struct CadenceApp: App {
 
             Divider()
 
+            // Buttons rather than a Picker: a Picker gives the checkmark but
+            // cannot carry a shortcut, and switching workspace is the most
+            // frequent thing anybody does in this window.
+            ForEach(Array(Workspace.allCases.enumerated()), id: \.element) { index, item in
+                Button {
+                    workspace = item
+                } label: {
+                    if workspace == item {
+                        Label(item.title, systemImage: "checkmark")
+                    } else {
+                        Text(item.title)
+                    }
+                }
+                .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+            }
+
+            Divider()
+
+            // Only reachable where it does anything. The menu is the one place
+            // a control that does not apply should still be visible, so it is
+            // disabled rather than removed — otherwise the shortcut appears and
+            // vanishes depending on which workspace is open.
             Picker("View", selection: $mode) {
                 Text("List").tag(WorkspaceMode.list)
                 Text("Calendar").tag(WorkspaceMode.calendar)
                 Text("Split").tag(WorkspaceMode.split)
             }
             .pickerStyle(.inline)
+            .disabled(workspace != .schedule)
 
             Divider()
         }

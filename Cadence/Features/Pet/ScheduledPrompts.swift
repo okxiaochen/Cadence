@@ -13,6 +13,11 @@ import Observation
 /// - **Only when there is something to say.** A prompt that reports "unchanged"
 ///   every two hours is how a companion stops being read, so a reply of `SKIP`
 ///   is silence rather than a message.
+/// - **Only while the character has anything left to say today.** Cadences are
+///   set one at a time and never add up on paper: weather every two hours plus
+///   news every four is nine interruptions in a working day, which nobody
+///   chose. `Persona.dailyRemarks` is the number they did choose, by picking a
+///   character.
 @MainActor
 @Observable
 final class ScheduledPrompts {
@@ -29,6 +34,13 @@ final class ScheduledPrompts {
     /// to something the user typed.
     private var running: PetPrompt?
     private var messagesAtStart = 0
+    /// Remarks actually made today, and the day that was.
+    ///
+    /// Held in memory rather than saved: a relaunch resetting the count is the
+    /// right answer often enough, since the commonest reason for one is that
+    /// nobody was there for the earlier ones.
+    private var remarksToday = 0
+    private var remarksDay: Date?
 
     init(preferences: Preferences, session: AgentSession, presence: PresenceTracker) {
         self.preferences = preferences
@@ -52,6 +64,14 @@ final class ScheduledPrompts {
         task = nil
     }
 
+    /// Whether the reply now arriving answers a scheduled check rather than
+    /// something the user asked for.
+    ///
+    /// Read by the companion's unread bubble, which must not show it: whether a
+    /// check was worth interrupting for is decided here, and the raw reply is
+    /// not the interruption — it is the material the decision is made from.
+    var isAnswering: Bool { running != nil }
+
     func dismiss() {
         announcement = nil
         announcementTitle = nil
@@ -64,6 +84,7 @@ final class ScheduledPrompts {
         guard running == nil, !session.status.isRunning else { return }
         // An empty desk is the commonest reason not to bother.
         guard presence.sittingMinutes > 0 else { return }
+        guard hasRemarksLeft(on: now) else { return }
 
         guard let due = preferences.petPrompts
             .filter({ $0.isUsable && $0.isScheduled })
@@ -75,7 +96,7 @@ final class ScheduledPrompts {
         markRun(due, at: now)
         running = due
         messagesAtStart = session.messages.count
-        session.send(Self.wrap(due.prompt), surface: .nightly)
+        session.send(Self.wrap(due.prompt), surface: .nightly, title: due.title)
     }
 
     /// The instruction that makes silence possible. Appended rather than left
@@ -104,6 +125,48 @@ final class ScheduledPrompts {
 
         announcementTitle = running.title
         announcement = reply
+        // Spent here rather than where the run is started, because the budget
+        // is for *interruptions* and a check that came back `SKIP` interrupted
+        // nobody. Charging for the silence would mean a quiet morning of
+        // weather could use up the day and leave nothing for the one thing
+        // worth saying at four.
+        remarksToday += 1
+    }
+
+    /// Whether the character has anything left in it today, rolling the count
+    /// over at midnight.
+    private func hasRemarksLeft(on now: Date) -> Bool {
+        let remaining = Self.remainingRemarks(
+            spent: remarksToday,
+            spentOn: remarksDay,
+            now: now,
+            allowance: preferences.persona.dailyRemarks
+        )
+        let today = Calendar.current.startOfDay(for: now)
+        if remarksDay != today {
+            remarksDay = today
+            remarksToday = 0
+        }
+        return remaining > 0
+    }
+
+    /// How many unprompted remarks are left, given what has been spent.
+    ///
+    /// Pure and static for the same reason `PetNudge.decide` is: everything
+    /// interesting about it is time passing, and driving that through a live
+    /// session would mean launching a CLI to assert on a subtraction.
+    static func remainingRemarks(
+        spent: Int,
+        spentOn: Date?,
+        now: Date,
+        allowance: Int,
+        calendar: Calendar = .current
+    ) -> Int {
+        let today = calendar.startOfDay(for: now)
+        // A count from an earlier day is not carried. Anything else would make
+        // the first morning after a busy night silent.
+        let carried = spentOn.map { calendar.startOfDay(for: $0) == today } == true ? spent : 0
+        return max(0, max(0, allowance) - carried)
     }
 
     private func markRun(_ prompt: PetPrompt, at moment: Date) {

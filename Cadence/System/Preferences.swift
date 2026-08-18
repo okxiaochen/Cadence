@@ -27,6 +27,8 @@ final class Preferences {
         showsDesktopPet = defaults.bool(forKey: Key.pet, default: false)
         breakAfterMinutes = defaults.integer(forKey: Key.breakAfter, default: 50)
         petPrompts = .decoded(from: defaults.data(forKey: Key.petPrompts))
+        personaID = defaults.string(forKey: Key.personaID) ?? Persona.fallback.id
+        customPersonas = .decodedPersonas(from: defaults.data(forKey: Key.customPersonas))
         moveAfterMinutes = defaults.integer(forKey: Key.moveAfter, default: 50)
         waterAfterMinutes = defaults.integer(forKey: Key.waterAfter, default: 90)
         place = defaults.string(forKey: Key.place) ?? ""
@@ -38,14 +40,29 @@ final class Preferences {
             rawValue: defaults.string(forKey: Key.appearance) ?? ""
         ) ?? .system
 
-        // Ones added after somebody already had a list of their own. Keyed on a
-        // flag rather than on absence, so deleting one is permanent — offering
-        // it back every launch would be the app arguing with them.
-        if !defaults.bool(forKey: Key.seededPrompts) {
+        // Ones added after somebody already had a list of their own. Recorded
+        // rather than inferred from absence, so deleting one is permanent —
+        // offering it back every launch would be the app arguing with them.
+        //
+        // By id, not by a single flag. The flag was set the first time anybody
+        // launched a version that had one, which meant every question shipped
+        // after that reached new installs only, silently, forever.
+        var seeded = Set(defaults.stringArray(forKey: Key.seededPromptIDs) ?? [])
+        if seeded.isEmpty, defaults.bool(forKey: Key.seededPrompts) {
+            // Whoever the old flag was set for has already been offered the
+            // three that existed when it was written, and may have thrown some
+            // away on purpose.
+            seeded = PetPrompt.originalDefaultIDs
+        }
+        let unseeded = PetPrompt.defaults.filter { !seeded.contains($0.id) }
+        if !unseeded.isEmpty {
             let known = Set(petPrompts.map(\.id))
-            petPrompts += PetPrompt.defaults.filter { !known.contains($0.id) }
-            defaults.set(true, forKey: Key.seededPrompts)
+            petPrompts += unseeded.filter { !known.contains($0.id) }
             defaults.set(petPrompts.encoded, forKey: Key.petPrompts)
+            defaults.set(
+                Array(seeded.union(PetPrompt.defaults.map(\.id))),
+                forKey: Key.seededPromptIDs
+            )
         }
 
         // A shipped question that turned out to be wrong is replaced, but only
@@ -121,6 +138,30 @@ final class Preferences {
     /// Saved questions, shown as buttons on the companion.
     var petPrompts: [PetPrompt] {
         didSet { defaults.set(petPrompts.encoded, forKey: Key.petPrompts) }
+    }
+
+    /// Which character the companion is, by `Persona.id`.
+    ///
+    /// The id is stored rather than the persona itself so that improving a
+    /// shipped voice reaches everybody on it. A copy is what you get when you
+    /// want to be left alone — see `Persona.copyForEditing`.
+    var personaID: String { didSet { defaults.set(personaID, forKey: Key.personaID) } }
+
+    /// Characters somebody wrote or copied. Built-ins are code and are never in
+    /// here, so a custom one can never shadow a built-in id by accident.
+    var customPersonas: [Persona] {
+        didSet { defaults.set(customPersonas.encoded, forKey: Key.customPersonas) }
+    }
+
+    /// Every character available to choose between, shipped ones first.
+    var allPersonas: [Persona] { Persona.builtIns + customPersonas }
+
+    /// The one in force. Falls back rather than failing: a persona deleted
+    /// while selected should leave a companion with a voice, not a mute one.
+    var persona: Persona {
+        customPersonas.first { $0.id == personaID }
+            ?? Persona.builtIns.first { $0.id == personaID }
+            ?? Persona.fallback
     }
 
     /// Where it was last dragged to, so it stays where it was put.
@@ -241,9 +282,12 @@ final class Preferences {
         static let breakAfter = "breakAfterMinutes"
         static let petOrigin = "petWindowOrigin"
         static let petPrompts = "petPrompts"
+        static let personaID = "personaID"
+        static let customPersonas = "customPersonas"
         static let moveAfter = "moveAfterMinutes"
         static let waterAfter = "waterAfterMinutes"
         static let seededPrompts = "petPromptsSeeded"
+        static let seededPromptIDs = "petPromptsSeededIDs"
         static let backgroundStyle = "backgroundStyle"
         static let backgroundOpacity = "backgroundOpacity"
         static let appearance = "appAppearance"

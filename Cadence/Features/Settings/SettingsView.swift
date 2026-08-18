@@ -11,10 +11,6 @@ struct SettingsView: View {
                 .tabItem { Label("Calendars", systemImage: "calendar") }
             AISettings()
                 .tabItem { Label("AI", systemImage: "sparkles") }
-            MemorySettings()
-                .tabItem { Label("Memory", systemImage: "brain") }
-            SkillSettings()
-                .tabItem { Label("Skills", systemImage: "list.bullet.rectangle") }
             NotificationSettings()
                 .tabItem { Label("Alerts", systemImage: "bell") }
             UpdateSettings()
@@ -59,6 +55,8 @@ private struct PlanningSettings: View {
                 Toggle("Show on the desktop", isOn: $preferences.showsDesktopPet)
 
                 if preferences.showsDesktopPet {
+
+                    CompanionCharacter()
 
                     Picker("Suggest a break after", selection: $preferences.breakAfterMinutes) {
                         ForEach([25, 40, 50, 60, 90], id: \.self) { Text("\($0)m").tag($0) }
@@ -178,6 +176,108 @@ private struct PlanningSettings: View {
         guard hour < 24 else { return "midnight" }
         let date = Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: Date()) ?? Date()
         return date.formatted(.dateTime.hour())
+    }
+}
+
+/// Choosing who the companion is, and editing one if none of them fit.
+///
+/// Its own view rather than a `@ViewBuilder` on `PlanningSettings` because it
+/// needs a binding into the persona being edited, and a builder called from a
+/// body that has already rebound `preferences` cannot have one.
+private struct CompanionCharacter: View {
+    @Environment(Preferences.self) private var preferences
+
+    /// Where the selected persona sits in the editable list, or nil when a
+    /// built-in is selected. Built-ins are code and cannot be written to, so
+    /// this doubles as "is there anything to show an editor for".
+    private var editableIndex: Int? {
+        preferences.customPersonas.firstIndex { $0.id == preferences.personaID }
+    }
+
+    var body: some View {
+        @Bindable var preferences = preferences
+
+        // A plain Form row rather than a `LabeledContent` holding its own
+        // stack: inside one, the picker floats in the middle of the trailing
+        // column and the caption sets ragged-left against the window edge,
+        // which reads as a different kind of control from the four rows under
+        // it. It is the same control, so it should sit the same way.
+        Picker("Character", selection: $preferences.personaID) {
+            ForEach(preferences.allPersonas) { Text($0.name).tag($0.id) }
+        }
+
+        VStack(alignment: .leading, spacing: 8) {
+            // Only while choosing. The editor's own "In one line" field holds
+            // the same sentence, and a caption repeating the field two rows
+            // above it is the app saying one thing twice.
+            if editableIndex == nil {
+                Text(preferences.persona.tagline)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let index = editableIndex {
+                editor(for: $preferences.customPersonas[index])
+            } else {
+                Button("Make a copy to edit") {
+                    let copy = preferences.persona.copyForEditing()
+                    preferences.customPersonas.append(copy)
+                    preferences.personaID = copy.id
+                }
+                .controlSize(.small)
+            }
+
+            Text("The character is how it speaks, not what it does — it will "
+                 + "not soften a clash or round off a time to stay in voice. How "
+                 + "often it speaks up unasked is part of the character too, so a "
+                 + "quiet one stays quiet however many cadences you set below.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func editor(for persona: Binding<Persona>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                TextField("Name", text: persona.name)
+                    .frame(width: 110)
+                TextField("In one line", text: persona.tagline)
+            }
+            TextEditor(text: persona.voice)
+                .font(.caption)
+                .frame(height: 96)
+                .scrollContentBackground(.hidden)
+                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.separator))
+
+            HStack(spacing: 8) {
+                Picker("Speaks up", selection: persona.dailyRemarks) {
+                    Text("Never").tag(0)
+                    ForEach([1, 2, 3, 4, 6, 8, 12], id: \.self) { Text("\($0)x a day").tag($0) }
+                }
+                .frame(width: 210)
+                Spacer()
+                Button("Delete") {
+                    let gone = persona.wrappedValue
+                    preferences.customPersonas.removeAll { $0.id == gone.id }
+                    // Back to what it was copied from rather than to the first
+                    // in the list: somebody who edited Sable and gave up wants
+                    // Sable back, not whoever happens to sort first.
+                    preferences.personaID = gone.basedOn ?? Persona.fallback.id
+                }
+                .controlSize(.small)
+            }
+
+            Text("Written in the second person, as instructions to it. The part "
+                 + "that actually changes how it sounds is what you tell it *not* "
+                 + "to do.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .textFieldStyle(.roundedBorder)
+        .font(.caption)
     }
 }
 
@@ -322,8 +422,10 @@ private struct AISettings: View {
             Section("Unattended runs") {
                 Toggle("Draft tomorrow's plan each evening", isOn: $scheduledRuns.nightlyPlanEnabled)
                 Toggle("Look back over the fortnight on Sundays", isOn: $scheduledRuns.weeklyReflectionEnabled)
+                Toggle("Read back what I have said, every few days", isOn: $scheduledRuns.portraitEnabled)
 
-                if scheduledRuns.nightlyPlanEnabled || scheduledRuns.weeklyReflectionEnabled {
+                if scheduledRuns.nightlyPlanEnabled || scheduledRuns.weeklyReflectionEnabled
+                    || scheduledRuns.portraitEnabled {
                     Picker("Run at", selection: $scheduledRuns.nightlyHour) {
                         ForEach([18, 19, 20, 21, 22, 23], id: \.self) { hour in
                             Text("\(hour):00").tag(hour)
@@ -331,9 +433,13 @@ private struct AISettings: View {
                     }
                 }
 
-                Text("Both stage a proposal for you to review in the morning and "
-                     + "never write on their own. The Sunday run only updates what "
-                     + "the assistant knows about how you work.")
+                Text("The first stages a proposal for you to review in the morning "
+                     + "and never writes on its own. The other two write only to "
+                     + "memory: the Sunday one learns how you work from your "
+                     + "records, and the last learns what you care about from what "
+                     + "you have said — it skips itself entirely when you have not "
+                     + "said anything since last time. What either writes is under "
+                     + "Memory, and can be corrected there.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -607,322 +713,6 @@ private struct AllowedCommandRow: View {
 
 // MARK: - Memory
 
-private struct MemorySettings: View {
-    @Environment(AppModel.self) private var model
-
-    @State private var memories: [Memory] = []
-    @State private var editing: Memory?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("What the assistant remembers")
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                Text("\(memories.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            Divider()
-
-            if memories.isEmpty {
-                VStack(spacing: 6) {
-                    Text("Nothing remembered yet.")
-                        .foregroundStyle(.secondary)
-                    Text("The assistant saves preferences, projects and constraints "
-                         + "as it learns them.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
-            } else {
-                List {
-                    ForEach(memories) { memory in
-                        MemoryRow(memory: memory) { updated in
-                            save(updated)
-                        } onDelete: {
-                            delete(memory)
-                        }
-                    }
-                }
-                .listStyle(.inset)
-            }
-
-            Divider()
-            HStack {
-                Text("Memory is written directly, without review. Everything is "
-                     + "editable here.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Forget All", role: .destructive) { deleteAll() }
-                    .controlSize(.small)
-                    .disabled(memories.isEmpty)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-        }
-        .onAppear(perform: reload)
-    }
-
-    private func reload() {
-        memories = (try? model.database.writer.read { db in try MemoryRepository.all(db) }) ?? []
-    }
-
-    private func save(_ memory: Memory) {
-        try? model.database.writer.write { db in try MemoryRepository.upsert(db, memory) }
-        reload()
-    }
-
-    private func delete(_ memory: Memory) {
-        try? model.database.writer.write { db in _ = try MemoryRepository.delete(db, id: memory.id) }
-        reload()
-    }
-
-    private func deleteAll() {
-        try? model.database.writer.write { db in try db.execute(sql: "DELETE FROM memory") }
-        reload()
-    }
-}
-
-/// What the assistant has worked out about how things are done here.
-///
-/// Separate from Memory because the two are different in a way that matters
-/// when you are looking at them: a memory is a fact about you, a skill is a
-/// procedure, and the reason to open a skill is to check whether the steps are
-/// still right.
-private struct SkillSettings: View {
-    @Environment(AppModel.self) private var model
-
-    @State private var skills: [Skill] = []
-    @State private var forked: Set<String> = []
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("How things are done here")
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                Text("\(skills.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            Divider()
-
-            if skills.isEmpty {
-                VStack(spacing: 6) {
-                    Text("No procedures yet.")
-                        .foregroundStyle(.secondary)
-                    Text("When the assistant works out how to read one of your "
-                         + "tools, it writes down what worked so the next run "
-                         + "does not start over.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
-            } else {
-                List {
-                    ForEach(skills) { skill in
-                        SkillRow(
-                            skill: skill,
-                            isForked: forked.contains(skill.id)
-                        ) {
-                            delete(skill)
-                        }
-                    }
-                }
-                .listStyle(.inset)
-            }
-
-            Divider()
-            Text("Built-in procedures ship with Cadence and update with it. "
-                 + "Editing one keeps your version until you delete it, which "
-                 + "puts the shipped one back.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-        }
-        .onAppear(perform: reload)
-    }
-
-    private func reload() {
-        skills = (try? model.database.writer.read { db in
-            try SkillRepository.all(db)
-        }) ?? []
-        forked = Set((try? model.database.writer.read { db in
-            try SkillRepository.forkedFromBuiltIn(db)
-        })?.map(\.id) ?? [])
-    }
-
-    private func delete(_ skill: Skill) {
-        try? model.database.writer.write { db in
-            _ = try SkillRepository.delete(db, id: skill.id)
-        }
-        reload()
-    }
-}
-
-private struct SkillRow: View {
-    var skill: Skill
-    var isForked: Bool
-    var onDelete: () -> Void
-
-    @State private var isExpanded = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(skill.title).font(.callout.weight(.medium))
-                    // The line that is always loaded, so it is the line worth
-                    // reading: it is what makes the assistant reach for this.
-                    Text(skill.whenToUse)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(isExpanded ? nil : 2)
-                }
-
-                Spacer(minLength: 0)
-
-                if skill.isStale() {
-                    Text("unverified")
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(.orange.opacity(0.18), in: Capsule())
-                }
-                Text(skill.isBuiltIn ? "Built in" : skill.source)
-                    .font(.caption2)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(.quaternary, in: Capsule())
-
-                Button {
-                    isExpanded.toggle()
-                } label: {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                }
-                .buttonStyle(.plain)
-
-                // A built-in has no stored row to remove; only an override or
-                // something the assistant wrote can be deleted.
-                Button(role: .destructive, action: onDelete) {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .disabled(skill.isBuiltIn)
-                .opacity(skill.isBuiltIn ? 0.25 : 1)
-            }
-
-            if isForked {
-                Label("The version that ships with Cadence has been updated "
-                      + "since you changed this one. Deleting yours restores it.",
-                      systemImage: "arrow.triangle.branch")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            }
-
-            if isExpanded {
-                Text(skill.body.isEmpty ? "No steps recorded." : skill.body)
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
-            }
-        }
-        .padding(.vertical, 2)
-    }
-}
-
-private struct MemoryRow: View {
-    @State var memory: Memory
-    var onSave: (Memory) -> Void
-    var onDelete: () -> Void
-
-    @State private var isExpanded = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Toggle(isOn: Binding(
-                    get: { memory.pinned },
-                    set: { memory.pinned = $0; onSave(memory) }
-                )) {
-                    Image(systemName: memory.pinned ? "pin.fill" : "pin")
-                }
-                .toggleStyle(.button)
-                .buttonStyle(.plain)
-                .help("Pinned memories are loaded in full every time")
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(memory.title).font(.callout.weight(.medium))
-                    Text(memory.summary).font(.caption).foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Text(memory.categoryValue.title)
-                    .font(.caption2)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(.quaternary, in: Capsule())
-
-                Button {
-                    isExpanded.toggle()
-                } label: {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                }
-                .buttonStyle(.plain)
-
-                Button(role: .destructive, action: onDelete) {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-            }
-
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 6) {
-                    TextField("Summary", text: $memory.summary, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { onSave(memory) }
-                    TextEditor(text: $memory.body)
-                        .font(.caption)
-                        .frame(minHeight: 60)
-                        .border(.quaternary)
-                    HStack {
-                        Text("key: \(memory.id)")
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.tertiary)
-                        Spacer()
-                        Text("updated \(Format.date(memory.updatedAt))")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                        Button("Save") { onSave(memory) }
-                            .controlSize(.small)
-                    }
-                }
-                .padding(.leading, 26)
-                .padding(.top, 4)
-            }
-        }
-        .padding(.vertical, 3)
-    }
-}
-
-// MARK: - Updates
-
 private struct UpdateSettings: View {
     @Environment(Updater.self) private var updater
 
@@ -985,6 +775,7 @@ private struct UpdateSettings: View {
 }
 
 // MARK: - Notifications
+
 
 private struct NotificationSettings: View {
     @Environment(AppModel.self) private var model

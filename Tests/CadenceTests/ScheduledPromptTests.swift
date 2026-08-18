@@ -111,4 +111,44 @@ final class DefaultPromptTests: XCTestCase {
     func testNewsIsFilteredAgainstMemoryRatherThanAFixedList() {
         XCTAssertTrue(PetPrompt.news.prompt.contains("search_memories"))
     }
+
+    // MARK: - Every shape of silence
+
+    /// The bug these replace: a scheduled check came back with a decorated or
+    /// prefaced `SKIP`, `isSilent` did not recognise it, and the companion
+    /// popped a bubble on the desktop reading "SKIP" — which is worse than any
+    /// weather report it was avoiding.
+    func testDecoratedSilenceIsStillSilence() {
+        for reply in [
+            "SKIP", "skip", "SKIP.", "**SKIP**", "\"SKIP\"", "`SKIP`", "> SKIP",
+            "  SKIP\n", "— SKIP", "#SKIP"
+        ] {
+            XCTAssertTrue(PetPrompt.isSilent(reply), reply)
+        }
+    }
+
+    func testAPrefacedSkipIsSilenceWithANoteAboutItselfAttached() {
+        XCTAssertTrue(PetPrompt.isSilent("Nothing worth reporting — SKIP"))
+        XCTAssertTrue(PetPrompt.isSilent("Checked; unchanged. SKIP"))
+    }
+
+    /// The other half. Over-matching would silence the remarks the whole
+    /// feature exists to make.
+    func testARealRemarkIsNotSwallowed() {
+        for reply in [
+            "Rain from about four, and you said you were walking home.",
+            "I would skip the gym today — you have been at the desk since seven.",
+            "You mentioned wanting to see it in March. Saturday is empty."
+        ] {
+            XCTAssertFalse(PetPrompt.isSilent(reply), reply)
+        }
+    }
+
+    /// Case-sensitive on purpose: the prompt asks for a token, and "skip" is
+    /// also an ordinary English word somebody's companion might use.
+    func testTheEnglishWordInASentenceIsNotTheToken() {
+        XCTAssertFalse(
+            PetPrompt.isSilent("You could skip it and nobody would notice.")
+        )
+    }
 }

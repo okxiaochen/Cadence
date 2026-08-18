@@ -98,6 +98,7 @@ struct PetView: View {
         // a bubble.
         let wanted = isOverFace || isOverPanel || isPinned || isTyping
         closing?.cancel()
+
         guard !wanted else { return isOpen = true }
         closing = Task {
             try? await Task.sleep(nanoseconds: 220_000_000)
@@ -105,6 +106,83 @@ struct PetView: View {
             isOpen = false
         }
     }
+
+    /// How long a pin outlives the pointer.
+    private static let awayCloseSeconds: Double = 5
+
+    /// Whether somebody is still with it, asked of the world rather than
+    /// inferred from events.
+    ///
+    /// The first attempt at the lease used `onHover` and `@FocusState`, and did
+    /// not work in the app while passing a test that drove it synthetically.
+    /// Both signals are *events*, and this is a borderless `.nonactivatingPanel`
+    /// — a pointer that leaves quickly, or a click into another application,
+    /// can leave the exit event unsent and the focus never resigned. Then
+    /// `attending` is true forever and the panel is exactly as stuck as before,
+    /// with more code.
+    ///
+    /// The keyboard was tried as a second signal and is no good either. This is
+    /// a `.nonactivatingPanel` with `hidesOnDeactivate` off, so `isKeyWindow`
+    /// stays **true** after you have switched to another application entirely —
+    /// measured, with Cadence reporting itself inactive and the panel still
+    /// claiming the keyboard. Focus in a window that never gives it up is not
+    /// evidence of anything.
+    ///
+    /// So: the pointer, and nothing else. A half-typed line holds the lease
+    /// separately, which covers the case this would have been for — somebody
+    /// typing with the mouse parked elsewhere holds it from the first
+    /// character, and an empty field they clicked and wandered off from is not
+    /// attention by any reading.
+    ///
+    /// A position cannot fail to arrive. Polled twice a second, which for a
+    /// comparison of two points is nothing.
+    private var isAttending: Bool {
+        guard let panel = NSApp.windows.first(where: {
+            $0.identifier == PetWindowController.panelIdentifier
+        }) else { return false }
+        return panel.frame.contains(NSEvent.mouseLocation)
+    }
+
+    /// Lets the pin lapse once somebody has plainly gone.
+    ///
+    /// A half-typed line holds it open. The draft survives the panel closing,
+    /// but watching it shut under your hands would not read like that, and
+    /// there is no way to know from outside that it did not eat what you wrote.
+    private func watchAway() async {
+        var awayFor: Double = 0
+        let step: Double = 0.5
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: UInt64(step * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            guard isPinned else { awayFor = 0; continue }
+
+            if isAttending || !draft.isEmpty {
+                awayFor = 0
+                continue
+            }
+            awayFor += step
+            if awayFor >= Self.awayCloseSeconds {
+                awayFor = 0
+                isPinned = false
+                isOverFace = false
+                isOverPanel = false
+                // Cleared too, or `setOpen` reads the stale focus of a field in
+                // a window nobody is looking at and holds the panel open on the
+                // strength of it.
+                isTyping = false
+                setOpen()
+            }
+        }
+    }
+
+    /// How long a bubble stays up on its own.
+    ///
+    /// Much longer than the panel's five seconds, and not tied to the pointer
+    /// at all, because a remark is read with the eyes: for the whole time
+    /// somebody is reading one, the mouse is exactly where they left it. Five
+    /// seconds here would mean the companion says something and takes it back
+    /// before it has been read, which is worse than it staying.
+    private static let bubbleLifeSeconds: Double = 45
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
@@ -144,18 +222,45 @@ struct PetView: View {
         .onChange(of: isThinking) { _, nowThinking in
             // Finished while closed: say so rather than leaving the answer
             // behind a panel nobody has a reason to open.
-            if !nowThinking, !isOpen, session.messages.last?.role == .assistant {
-                unreadReply = session.messages.last?.text
+            //
+            // Two things it must not say. A scheduled check's reply is not for
+            // here — `ScheduledPrompts` decides whether that was worth an
+            // interruption, and this bubble sits *above* its announcement in
+            // the chain, so showing it would cover the considered version with
+            // the raw one. And a reply that means silence is silence by
+            // whatever path it arrives: the bug this replaces popped a bubble
+            // reading "SKIP".
+            if !nowThinking, !isOpen, !scheduled.isAnswering,
+               let last = session.messages.last, last.role == .assistant,
+               !PetPrompt.isSilent(last.text) {
+                unreadReply = last.text
             }
             setOpen()
         }
         .onChange(of: isOpen) { _, open in if open { unreadReply = nil } }
+        .onChange(of: draft.isEmpty) { _, _ in setOpen() }
+        // Both bubbles time out rather than waiting to be clicked. `task(id:)`
+        // restarts the clock when the text changes, so a second remark gets its
+        // own life rather than inheriting what was left of the first one's.
+        .task(id: unreadReply) {
+            guard unreadReply != nil else { return }
+            try? await Task.sleep(nanoseconds: UInt64(Self.bubbleLifeSeconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            unreadReply = nil
+        }
+        .task(id: scheduled.announcement) {
+            guard scheduled.announcement != nil else { return }
+            try? await Task.sleep(nanoseconds: UInt64(Self.bubbleLifeSeconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            scheduled.dismiss()
+        }
         .onExitCommand {
             isPinned = false
             isTyping = false
             setOpen()
         }
         .task { await breathe() }
+        .task { await watchAway() }
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 60_000_000_000)
@@ -194,12 +299,15 @@ struct PetView: View {
     /// It stays pinned afterwards rather than closing on its own: the reply is
     /// the reason the question was asked, and a panel that clears itself while
     /// you are reading is the same bug one step later.
-    private func ask(_ text: String) {
+    /// `title` is what the button said, which is the only place that knows it.
+    /// Without it the conversation is listed under the instruction the button
+    /// sent, and six weather checks are six identical rows of curl.
+    private func ask(_ text: String, title: String? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         isPinned = true
         setOpen()
-        session.send(trimmed, surface: .chat)
+        session.send(trimmed, surface: .chat, title: title)
     }
 
     /// What the text field does, which depends on what the text field says.
@@ -354,7 +462,7 @@ struct PetView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(prompts) { saved in
-                            Button(saved.title) { ask(saved.prompt) }
+                            Button(saved.title) { ask(saved.prompt, title: saved.title) }
                                 .buttonStyle(.borderless)
                                 .font(.caption2)
                                 .padding(.horizontal, 8)

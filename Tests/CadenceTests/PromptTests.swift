@@ -32,11 +32,15 @@ final class PromptTests: XCTestCase {
             meegle: MeegleClient { _ in Data(#"{"list": []}"#.utf8) }
         )
         let names = Set(catalog.tools().map(\.name))
-        let prompts = [
+        let prompts = ([
             AgentSession.workItemRules(enabled: true),
             ScheduledRuns.nightlyPrompt(includingWorkItems: true),
-            ScheduledRuns.reflectionPrompt
-        ].joined(separator: "\n")
+            ScheduledRuns.reflectionPrompt,
+            ScheduledRuns.portraitPrompt
+            // The shipped questions name tools too, and a cadence that calls a
+            // tool that no longer exists fails unattended, at nine in the
+            // evening, where nobody sees it.
+        ] + PetPrompt.defaults.map(\.prompt)).joined(separator: "\n")
 
         // Anything shaped like a tool call in the prose has to be a real tool.
         for token in prompts.split(whereSeparator: { !$0.isLetter && $0 != "_" }) {
@@ -198,6 +202,29 @@ final class PromptTests: XCTestCase {
     // Found by running it: on a Saturday evening it plans Sunday, and with
     // weekends excluded there is nowhere to put anything — a model call spent
     // on a card that says it could do nothing, two nights in seven.
+
+    // MARK: - When it is worth reading the conversations back
+
+    @MainActor
+    func testTheFirstReadingIsDueAsSoonAsItIsTurnedOn() throws {
+        let runs = try runs()
+        XCTAssertTrue(runs.isPortraitDue(now: evening(17), lastRun: .some(nil)))
+    }
+
+    @MainActor
+    func testItDoesNotReReadTheSameFortnightEveryEvening() throws {
+        let runs = try runs()
+        XCTAssertFalse(runs.isPortraitDue(now: evening(17), lastRun: evening(16)))
+        XCTAssertTrue(runs.isPortraitDue(now: evening(17), lastRun: evening(14)))
+    }
+
+    /// The failure this guards is a fortnight away from the desk buying five
+    /// model calls that each conclude, separately, that nothing has changed.
+    @MainActor
+    func testASilentStretchIsNotWorthAModelCall() throws {
+        let runs = try runs()
+        XCTAssertFalse(runs.hasBeenSpokenTo(since: nil), "nothing has been said at all")
+    }
 
     private func runs() throws -> ScheduledRuns {
         let model = AppModel(database: try AppDatabase.inMemory())

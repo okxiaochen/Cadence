@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// The two AI runs nobody asks for.
+/// The three AI runs nobody asks for.
 ///
 /// **Nightly plan** — late each evening, draft tomorrow. The proposal is
 /// waiting in the morning as ghosts on the grid, to accept or throw away. The
@@ -14,9 +14,18 @@ import Observation
 /// week's planning than any prompt, and it can only be learned from records
 /// that now exist.
 ///
-/// Both are off by default and both stage rather than write — an unattended run
-/// that could edit the database while you sleep is not a feature anyone asked
-/// for twice.
+/// **Getting to know you** — every few days, read back what the person has
+/// actually said and update the picture of who they are. The reflection run
+/// learns how they work from their records; this one learns what they care
+/// about from their words, and it is the difference between a companion that
+/// opens with the weather and one that opens with something you would want to
+/// hear. It reads `read_conversations`, which deliberately cannot see the
+/// unattended runs — including its own.
+///
+/// All three are off by default. The first two stage rather than write; this
+/// one cannot, because memory is written directly by design, which is the
+/// stronger reason to leave it opt-in. An unattended run that could edit the
+/// database while you sleep is not a feature anyone asked for twice.
 @MainActor
 @Observable
 final class ScheduledRuns {
@@ -40,6 +49,15 @@ final class ScheduledRuns {
     }
 
     /// The hour the nightly run fires, 24h. Late enough that the day is over.
+    /// Off by default like the others, and for a sharper reason: this is the
+    /// one unattended run whose writes are not staged for review.
+    var portraitEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(portraitEnabled, forKey: Key.portrait)
+            restart()
+        }
+    }
+
     var nightlyHour: Int {
         didSet {
             UserDefaults.standard.set(nightlyHour, forKey: Key.nightlyHour)
@@ -49,16 +67,19 @@ final class ScheduledRuns {
 
     private(set) var lastNightlyRun: Date?
     private(set) var lastReflectionRun: Date?
+    private(set) var lastPortraitRun: Date?
 
     init(model: AppModel, session: AgentSession) {
         self.model = model
         self.session = session
         self.nightlyPlanEnabled = UserDefaults.standard.bool(forKey: Key.nightly)
         self.weeklyReflectionEnabled = UserDefaults.standard.bool(forKey: Key.reflection)
+        self.portraitEnabled = UserDefaults.standard.bool(forKey: Key.portrait)
         let hour = UserDefaults.standard.integer(forKey: Key.nightlyHour)
         self.nightlyHour = (1...23).contains(hour) ? hour : 21
         self.lastNightlyRun = UserDefaults.standard.object(forKey: Key.lastNightly) as? Date
         self.lastReflectionRun = UserDefaults.standard.object(forKey: Key.lastReflection) as? Date
+        self.lastPortraitRun = UserDefaults.standard.object(forKey: Key.lastPortrait) as? Date
     }
 
     // MARK: - Scheduling
@@ -108,8 +129,55 @@ final class ScheduledRuns {
                 Self.nightlyPrompt(includingWorkItems: MeegleClient.configured() != nil),
                 surface: .nightly
             )
+            return
+        }
+
+        // Last of the three, and the only one that can wait. The other two are
+        // about a particular day and miss their moment; this one just needs to
+        // happen eventually, so it gives way rather than competing.
+        if portraitEnabled, isPortraitDue(now: now), hasBeenSpokenTo(since: lastPortraitRun) {
+            lastPortraitRun = now
+            UserDefaults.standard.set(now, forKey: Key.lastPortrait)
+            session.send(Self.portraitPrompt, surface: .portrait)
         }
     }
+
+    /// Whether anything has actually been said since last time.
+    ///
+    /// Without it the run fires every third evening whatever happened, and a
+    /// fortnight away from the desk buys five model calls that each conclude,
+    /// separately, that nothing has changed. Asked in SQL rather than by
+    /// letting the prompt find out, because finding out is the expensive part.
+    func hasBeenSpokenTo(since: Date?) -> Bool {
+        let cutoff = since ?? .distantPast
+        let count = (try? model.database.writer.read { db in
+            try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM ai_run
+                WHERE startedAt > ? AND status = ? AND surface NOT IN (?, ?, ?)
+                """, arguments: [
+                    cutoff, AIRun.Status.succeeded.rawValue,
+                    AISurface.nightly.rawValue, AISurface.reflection.rawValue,
+                    AISurface.portrait.rawValue
+                ]) ?? 0
+        }) ?? 0
+        return count > 0
+    }
+
+    /// Every third evening. Often enough that a fortnight-old picture is the
+    /// worst it gets; rare enough that it is not re-reading the same week over
+    /// and over to reach the same conclusions.
+    func isPortraitDue(
+        now: Date = Date(),
+        calendar: Calendar = .current,
+        lastRun: Date?? = nil
+    ) -> Bool {
+        guard calendar.component(.hour, from: now) >= nightlyHour else { return false }
+        guard let last = (lastRun ?? lastPortraitRun) else { return true }
+        let days = calendar.dateComponents([.day], from: last, to: now).day ?? 0
+        return days >= Self.portraitEveryDays
+    }
+
+    static let portraitEveryDays = 3
 
     /// Due after the chosen hour, once a day — and **not on the eve of a day
     /// the user does not work**.
@@ -190,6 +258,47 @@ final class ScheduledRuns {
         """
     }
 
+    /// The one that makes a companion out of a planner.
+    ///
+    /// Every rule under "What not to write down" is there because the obvious
+    /// version of this prompt fails in that exact way: asked to summarise
+    /// conversations, a model writes down *the conversations* — "asked about
+    /// SwiftUI layout on Tuesday" — which is a diary, is never true a second
+    /// time, and buries the four things about somebody that are.
+    static let portraitPrompt = """
+        Work out who I am, from what I have actually said to you.
+
+        1. Call read_conversations for the last 14 days.
+        2. Call search_memories before writing anything, so that you revise \
+        rather than duplicate.
+        3. Write down what those conversations show about me that will still be \
+        true next month: what I am working on and why it matters to me, what I \
+        keep coming back to, what I am plainly interested in away from the work, \
+        how I like to be talked to, and anything I said I wanted to do and have \
+        not done.
+        4. Save each with remember. Use category "interest" for anything I care \
+        about that is not work — that category exists so there is something \
+        worth saying to me later, and it is the first thing lost if you only \
+        file what bears on my schedule.
+        5. Set source to "inferred". You worked these out; they should come back \
+        for checking rather than standing forever.
+        6. Reuse an existing key whenever this revises something you already \
+        knew. Never leave two memories disagreeing.
+
+        What NOT to write down:
+        - What a conversation was about. "Asked about SwiftUI layout" is not a \
+        fact about me. "Builds macOS apps in Swift" is, and you need it once.
+        - Anything resting on a single passing remark. Twice is a pattern; once \
+        is a Tuesday.
+        - Anything about one task. That is what the task list is for.
+        - Anything you would be uncomfortable repeating to me. If it is worth \
+        knowing, it is worth being said out loud.
+
+        Finish with one short line per memory you wrote or revised, so I can see \
+        what you concluded about me. If you concluded nothing, say that in one \
+        line — it is a normal answer to a quiet fortnight.
+        """
+
     static let reflectionPrompt = """
         Look back over the past two weeks and update what you know about me.
 
@@ -227,5 +336,7 @@ final class ScheduledRuns {
         static let nightlyHour = "nightlyPlanHour"
         static let lastNightly = "nightlyPlanLastRun"
         static let lastReflection = "weeklyReflectionLastRun"
+        static let portrait = "portraitEnabled"
+        static let lastPortrait = "portraitLastRun"
     }
 }

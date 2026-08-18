@@ -5,10 +5,12 @@ import GRDB
 /// same agent loop (AI-INTEGRATION.md §2).
 enum AISurface: String, Codable, CaseIterable {
     case chat, breakdown, generate, schedule, estimate, triage, rebalance
-    /// Unattended runs: tomorrow's plan, and the weekly look back over what
-    /// actually happened. Both start themselves, so they are marked as their
-    /// own surfaces — a run nobody asked for should be identifiable later.
-    case nightly, reflection
+    /// Unattended runs: tomorrow's plan, the weekly look back over what
+    /// actually happened, and the reading of past conversations that keeps the
+    /// companion's picture of the person current. All three start themselves,
+    /// so they are marked as their own surfaces — a run nobody asked for should
+    /// be identifiable later.
+    case nightly, reflection, portrait
 
     /// Whether somebody asked for this just now and is there to answer.
     ///
@@ -19,7 +21,7 @@ enum AISurface: String, Codable, CaseIterable {
     /// read could ask for anything, at three in the morning, with nobody there.
     var isInteractive: Bool {
         switch self {
-        case .nightly, .reflection: false
+        case .nightly, .reflection, .portrait: false
         default: true
         }
     }
@@ -35,6 +37,7 @@ enum AISurface: String, Codable, CaseIterable {
         case .rebalance: "Rebalance"
         case .nightly: "Nightly Plan"
         case .reflection: "Reflection"
+        case .portrait: "Getting to know you"
         }
     }
 
@@ -91,6 +94,17 @@ enum AISurface: String, Codable, CaseIterable {
             no tasks, no blocks. Write nothing a fortnight of records does not \
             support.
             """
+        case .portrait:
+            """
+            Nobody is watching this run. Read back what this person has said to \
+            you and update your picture of who they are with remember. Change \
+            nothing else — no tasks, no blocks, no schedule.
+
+            The reflection run already covers how they work. This one is for \
+            everything else about them: what they care about, what they keep \
+            returning to, what they said they wanted to do. Do not repeat its \
+            job.
+            """
         }
     }
 }
@@ -113,6 +127,12 @@ struct AIRun: Identifiable, Codable, FetchableRecord, PersistableRecord {
     var appliedDiff: String?
     /// Which conversation this turn belongs to. Unattended runs get one each.
     var conversationID: String?
+    /// What to call this in a list, when the prompt is a poor name for it.
+    ///
+    /// Set by whatever started the run — a companion button knows it is the
+    /// weather, and the instruction it sends does not say so. Nil for anything
+    /// somebody typed, where the words they used are the best title there is.
+    var title: String?
 
     var statusValue: Status { Status(rawValue: status) ?? .failed }
     var surfaceValue: AISurface { AISurface(rawValue: surface) ?? .chat }
@@ -159,17 +179,24 @@ enum AIRunRepository {
             let id: String = row["id"]
             // The opening prompt, not the latest: it is the thing that names
             // the conversation in your head.
-            let opener = try String.fetchOne(db, sql: """
-                SELECT prompt FROM ai_run WHERE conversationID = ?
+            // Both, because which one answered matters: a run that was named
+            // by whatever started it should keep that name even on a surface
+            // that has a label of its own — a scheduled weather check runs
+            // unattended, but calling it "Nightly plan" is simply wrong.
+            let opening = try Row.fetchOne(db, sql: """
+                SELECT title, prompt FROM ai_run WHERE conversationID = ?
                 ORDER BY startedAt LIMIT 1
-                """, arguments: [id]) ?? ""
+                """, arguments: [id])
+            let named: String? = opening?["title"]
+            let opener = named ?? (opening?["prompt"] as String? ?? "")
             return AIConversation(
                 id: id,
                 title: opener,
                 startedAt: row["startedAt"],
                 lastAt: row["lastAt"],
                 turns: row["turns"] ?? 0,
-                surface: AISurface(rawValue: row["surface"] ?? "") ?? .chat
+                surface: AISurface(rawValue: row["surface"] ?? "") ?? .chat,
+                isNamed: named != nil
             )
         }
     }
@@ -195,14 +222,19 @@ struct AIConversation: Identifiable, Hashable {
     var lastAt: Date
     var turns: Int
     var surface: AISurface
+    /// Whether the title came from whatever started the run rather than from
+    /// the words of the prompt.
+    var isNamed = false
 
     /// Unattended runs are worth telling apart in the list: you did not start
     /// them, so their opening line will mean nothing to you.
     var displayTitle: String {
+        if isNamed, !title.isEmpty { return title }
         switch surface {
-        case .nightly: "Nightly plan"
-        case .reflection: "Weekly reflection"
-        default: title.isEmpty ? "Untitled" : title
+        case .nightly: return "Nightly plan"
+        case .reflection: return "Weekly reflection"
+        case .portrait: return "Getting to know you"
+        default: return title.isEmpty ? "Untitled" : title
         }
     }
 }

@@ -361,4 +361,37 @@ final class PetInputTests: XCTestCase {
         let saved = [PetPrompt(title: "Catch up", prompt: "what did I miss?")]
         XCTAssertEqual([PetPrompt].decoded(from: saved.encoded), saved)
     }
+
+    // MARK: - Getting a newly shipped question to somebody who already had the app
+
+    /// The bug the id record replaces: one flag, set the first time anybody ran
+    /// a version that had it, after which every question shipped later reached
+    /// new installs only — silently, and forever.
+    @MainActor
+    func testAQuestionShippedLaterReachesSomebodyWhoAlreadyHadTheApp() {
+        let defaults = UserDefaults(suiteName: "PetTests.\(UUID().uuidString)")!
+        // Somebody on the old build: the flag is set, and they have the three
+        // questions that existed when it was.
+        defaults.set(true, forKey: "petPromptsSeeded")
+        defaults.set(
+            [PetPrompt.planToday, PetPrompt.weather, PetPrompt.news].encoded,
+            forKey: "petPrompts"
+        )
+
+        let ids = Preferences(defaults: defaults).petPrompts.map(\.id)
+        XCTAssertTrue(ids.contains(PetPrompt.somethingPersonal.id), "\(ids)")
+    }
+
+    /// Deleting one has to stay permanent, or the app is arguing with them.
+    @MainActor
+    func testAQuestionThrownAwayDoesNotComeBack() {
+        let defaults = UserDefaults(suiteName: "PetTests.\(UUID().uuidString)")!
+        _ = Preferences(defaults: defaults)
+
+        let kept = Preferences(defaults: defaults)
+        kept.petPrompts.removeAll { $0.id == PetPrompt.weather.id }
+
+        let reopened = Preferences(defaults: defaults)
+        XCTAssertFalse(reopened.petPrompts.contains { $0.id == PetPrompt.weather.id })
+    }
 }

@@ -1,6 +1,15 @@
 import SwiftUI
 
 struct AIPanelView: View {
+    /// Whether this is the window rather than a column beside it.
+    ///
+    /// One view in two shapes rather than two views: everything about a
+    /// conversation is the same either way, and the differences are all about
+    /// width — a column is capped so it cannot crush the calendar next to it,
+    /// and a window is uncapped but has to stop its text from setting in
+    /// hundred-character lines, which nobody can read.
+    var isPrimary = false
+
     @Environment(AppModel.self) private var model
     @Environment(AgentSession.self) private var session
 
@@ -27,12 +36,22 @@ struct AIPanelView: View {
             }
 
             composer
+                // The same measure the transcript uses. A full-width field
+                // under a centred column reads as two panes that happen to be
+                // stacked, and the eye has to travel to the left edge to type
+                // a reply to something set in the middle.
+                .frame(maxWidth: isPrimary ? 784 : .infinity)
+                .frame(maxWidth: .infinity, alignment: isPrimary ? .center : .leading)
         }
-        // A capped maximum, or the panel is as flexible as the workspace beside
-        // it and an `HStack` splits the window down the middle — which crushes
-        // the calendar past its own minimum and the two overlap. This is a
-        // column beside the work, not half of it.
-        .frame(minWidth: Self.minimumWidth, idealWidth: 340, maxWidth: 460)
+        // A capped maximum when it is a column, or the panel is as flexible as
+        // the workspace beside it and an `HStack` splits the window down the
+        // middle — which crushes the calendar past its own minimum and the two
+        // overlap. As the window it takes what it is given.
+        .frame(
+            minWidth: Self.minimumWidth,
+            idealWidth: isPrimary ? nil : 340,
+            maxWidth: isPrimary ? nil : 460
+        )
     }
 
     static let minimumWidth: CGFloat = 300
@@ -113,6 +132,11 @@ struct AIPanelView: View {
                     }
                 }
                 .padding(12)
+                // A measure rather than the full width. Set across a wide
+                // window, a paragraph runs to well over a hundred characters
+                // a line and the eye loses its place returning to the left.
+                .frame(maxWidth: isPrimary ? 760 : .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: isPrimary ? .center : .leading)
             }
             .onChange(of: session.messages.count) { _, _ in
                 if let last = session.messages.last { scroller.scrollTo(last.id, anchor: .bottom) }

@@ -294,7 +294,13 @@ final class ToolCatalog: @unchecked Sendable {
             MCPTool(
                 name: "remember",
                 description: "Save a durable fact about the user: a preference, project, "
-                    + "goal, constraint or routine. Saved immediately.\n\n"
+                    + "goal, constraint, routine — or an interest. Saved immediately.\n\n"
+                    + "An `interest` is something they care about away from the "
+                    + "work: a hobby, a subject they keep coming back to, "
+                    + "somewhere they want to go, something they said they want "
+                    + "to see or do. Record these. They are what makes it possible "
+                    + "to say something worth hearing later, and they are the first "
+                    + "thing lost if you only file what bears on the schedule.\n\n"
                     + "IMPORTANT — reuse the existing key when revising. Writing to a key "
                     + "REPLACES that memory, which is how a memory gets corrected when the "
                     + "user changes their mind. Never add a second memory that contradicts "
@@ -303,7 +309,8 @@ final class ToolCatalog: @unchecked Sendable {
                     + "this conversation.",
                 inputSchema: object([
                     "key": string("Stable slug, e.g. meeting-time-preference. Reuse to revise."),
-                    "category": string("preference, project, goal, constraint, routine or person"),
+                    "category": string("preference, project, goal, constraint, routine, person "
+                        + "or interest"),
                     "title": string("Short name"),
                     "summary": string("One line — this is what always loads"),
                     "body": string("Detail, loaded only on request"),
@@ -336,6 +343,23 @@ final class ToolCatalog: @unchecked Sendable {
                 inputSchema: object([
                     "key": string("Memory key")
                 ], required: ["key"])
+            ),
+            MCPTool(
+                name: "read_conversations",
+                description: "What the user has actually said to you lately, most "
+                    + "recent first. Their own words and your replies, from the "
+                    + "conversations they started.\n\n"
+                    + "Runs that started themselves are excluded, so this is a "
+                    + "record of them talking to you rather than of you talking to "
+                    + "yourself.\n\n"
+                    + "Use it to work out who this person is and what they care "
+                    + "about — not to recall a task, which belongs in the task "
+                    + "list. Long turns are truncated; this is for the shape of "
+                    + "what was said, not a transcript.",
+                inputSchema: object([
+                    "sinceDays": integer("How far back to look (default 14, max 90)"),
+                    "limit": integer("How many conversations (default 15, max 40)")
+                ])
             ),
             MCPTool(
                 name: "run_command",
@@ -469,6 +493,7 @@ final class ToolCatalog: @unchecked Sendable {
         case "remember": return try remember(arguments)
         case "list_stale_memories": return try listStaleMemories(arguments)
         case "confirm_memory": return try confirmMemory(arguments)
+        case "read_conversations": return try readConversations(arguments)
         case "run_command": return try runCommand(arguments)
         case "list_allowed_commands": return try listAllowedCommands()
         case "list_skills": return try listSkills(arguments)
@@ -1219,6 +1244,82 @@ final class ToolCatalog: @unchecked Sendable {
             "note": "Check each against what you can see now, then confirm_memory, "
                 + "remember with the same key to revise, or forget."
         ]
+    }
+
+    /// Recent conversations, as text, for working out who somebody is.
+    ///
+    /// Two limits and one exclusion, all of which change the answer:
+    ///
+    /// - **Unattended surfaces are left out.** A nightly plan and a reflection
+    ///   are the assistant writing, not the user speaking. Feeding them back in
+    ///   would let it draw conclusions from its own earlier guesses and then
+    ///   record those as things it learned — a loop that gets more confident
+    ///   with every pass and never touches reality again.
+    /// - **Each turn is truncated.** A pasted stack trace is not a clue about
+    ///   somebody's character, and it would crowd out twenty turns that are.
+    /// - **The whole reply is capped.** This lands in a context window with the
+    ///   memory outline and the day's schedule already in it.
+    private func readConversations(_ args: [String: Any]) throws -> Any {
+        let days = min(90, max(1, args.int("sinceDays") ?? 14))
+        let limit = min(40, max(1, args.int("limit") ?? 15))
+        let since = calendar.date(byAdding: .day, value: -days, to: Date()) ?? Date.distantPast
+
+        let runs = try database.writer.read { db in
+            try AIRun.fetchAll(db, sql: """
+                SELECT * FROM ai_run
+                WHERE startedAt >= ? AND status = ? AND surface NOT IN (?, ?, ?)
+                ORDER BY startedAt DESC
+                LIMIT ?
+                """, arguments: [
+                    since, AIRun.Status.succeeded.rawValue,
+                    AISurface.nightly.rawValue, AISurface.reflection.rawValue,
+                    AISurface.portrait.rawValue,
+                    limit * 12
+                ])
+        }
+
+        var budget = Self.conversationCharacterBudget
+        var grouped: [(id: String, at: Date, turns: [[String: Any]])] = []
+
+        for run in runs where budget > 0 {
+            let asked = Self.condense(run.prompt)
+            let replied = Self.condense(AgentSession.parseFinalText(from: run.rawOutput))
+            guard !asked.isEmpty || !replied.isEmpty else { continue }
+            budget -= asked.count + replied.count
+
+            let turn: [String: Any] = ["asked": asked, "replied": replied]
+            let key = run.conversationID ?? run.id
+            if let index = grouped.firstIndex(where: { $0.id == key }) {
+                grouped[index].turns.append(turn)
+            } else {
+                if grouped.count >= limit { break }
+                grouped.append((id: key, at: run.startedAt, turns: [turn]))
+            }
+        }
+
+        return [
+            "count": grouped.count,
+            "conversations": grouped.map { conversation in
+                [
+                    "startedAt": Format.date(conversation.at),
+                    // Oldest turn first inside a conversation: it reads as a
+                    // conversation that way, and how something opened is
+                    // usually what says most about why it was asked.
+                    "turns": Array(conversation.turns.reversed())
+                ] as [String: Any]
+            }
+        ]
+    }
+
+    /// Roughly a page. Long enough to keep the point of a turn, short enough
+    /// that one pasted log cannot eat the whole budget.
+    private static let conversationTurnLimit = 1_200
+    private static let conversationCharacterBudget = 40_000
+
+    private static func condense(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > conversationTurnLimit else { return trimmed }
+        return String(trimmed.prefix(conversationTurnLimit)) + "… (truncated)"
     }
 
     private func confirmMemory(_ args: [String: Any]) throws -> Any {

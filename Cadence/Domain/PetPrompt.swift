@@ -86,7 +86,50 @@ struct PetPrompt: Identifiable, Codable, Hashable {
         everyMinutes: 240
     )
 
-    static let defaults: [PetPrompt] = [planToday, weather, news]
+    /// The one that is actually companionship rather than a service.
+    ///
+    /// Weather and news are the same shape as each other: fetch something, tell
+    /// me if it matters. This one fetches nothing. Its whole input is what the
+    /// assistant has learned about the person, which makes it the only prompt
+    /// here that cannot be written by somebody who has just installed the app —
+    /// it is worth nothing on day one and more every week after.
+    ///
+    /// The rule that keeps it honest is "name the thing you know". Without it a
+    /// model asked to say something personal produces flattery — "thought you
+    /// might enjoy" — which is indistinguishable from a horoscope and reads as
+    /// one. Forced to cite the memory it is acting on, it either has a reason
+    /// or falls silent.
+    static let somethingPersonal = PetPrompt(
+        id: "something-personal",
+        // Short because the row is four capsules wide at 300pt and the fourth
+        // one falls off the end otherwise — into a horizontal scroll view with
+        // no indicator, which is the same as not being there. It also happens
+        // to be what you would actually say to somebody: not a command for a
+        // report, an opening.
+        title: "Anything?",
+        prompt: "Call search_memories for what I am interested in, what I keep "
+            + "coming back to, and anything I said I wanted to do.\n\n"
+            + "Say one thing that follows from something you actually know "
+            + "about me. Something I would want to hear — a thought about a "
+            + "thing I care about, a question about something I mentioned and "
+            + "never came back to, a connection between two things I have said. "
+            + "Talk to me like somebody who has been paying attention.\n\n"
+            + "Name the thing you know — \"you said in March you wanted to see "
+            + "it\", never \"I thought you might like\".\n\n"
+            + "This is not about my schedule. Do not plan anything, do not "
+            + "suggest how to fill my time, and do not tell me what I should be "
+            + "doing. No small talk, and nothing I could have got from a search "
+            + "engine. If nothing you know about me is worth saying right now, "
+            + "reply SKIP.",
+        everyMinutes: 240
+    )
+
+    static let defaults: [PetPrompt] = [planToday, weather, news, somethingPersonal]
+
+    /// What shipped before questions were recorded one id at a time. Frozen: it
+    /// is a record of what a particular old flag meant, not a list to keep up
+    /// to date, and adding to it would re-offer a question somebody deleted.
+    static let originalDefaultIDs: Set<String> = ["plan-today", "weather", "news"]
 
     /// The word a scheduled prompt answers with when there is nothing worth
     /// interrupting for.
@@ -99,7 +142,24 @@ struct PetPrompt: Identifiable, Codable, Hashable {
 
     static func isSilent(_ reply: String) -> Bool {
         let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty || trimmed.uppercased().hasPrefix(silence)
+        guard !trimmed.isEmpty else { return true }
+
+        // Models decorate. `**SKIP**`, `"SKIP"`, `> SKIP` and `SKIP.` are the
+        // same answer as a bare one, and the ones that got through unstripped
+        // were shown to the user as a message reading "SKIP" — which is the
+        // single most confusing thing a companion can say.
+        let bare = trimmed
+            .trimmingCharacters(in: CharacterSet(charactersIn: "*_`\"'#>.-— \n\t"))
+        if bare.uppercased().hasPrefix(silence) { return true }
+
+        // And they preface. "Nothing worth reporting — SKIP" is silence with a
+        // note about itself attached, and the note is not for anybody.
+        //
+        // Bounded by length so a real remark that happens to mention the word
+        // is not swallowed, and deliberately **case-sensitive**: the prompt
+        // asks for the token, so "I would skip the gym today" is a sentence and
+        // "SKIP" is an answer.
+        return bare.count <= 80 && bare.contains(silence)
     }
 
     var isUsable: Bool {

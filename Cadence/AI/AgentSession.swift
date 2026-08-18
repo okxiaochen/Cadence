@@ -91,7 +91,7 @@ final class AgentSession {
 
     // MARK: - Running
 
-    func send(_ prompt: String, surface: AISurface = .chat) {
+    func send(_ prompt: String, surface: AISurface = .chat, title: String? = nil) {
         guard !status.isRunning else { return }
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -103,7 +103,7 @@ final class AgentSession {
         // Synchronously, so the button disables and the spinner appears on the
         // click rather than a run-loop tick later.
         status = .running
-        task = Task { await run(prompt: trimmed, surface: surface, history: history) }
+        task = Task { await run(prompt: trimmed, surface: surface, history: history, title: title) }
     }
 
     func cancel() {
@@ -189,7 +189,9 @@ final class AgentSession {
             .joined(separator: "\n")
     }
 
-    private func run(prompt: String, surface: AISurface, history: String = "") async {
+    private func run(
+        prompt: String, surface: AISurface, history: String = "", title: String? = nil
+    ) async {
         status = .running
         toolCalls = []
         rawOutput = ""
@@ -198,6 +200,7 @@ final class AgentSession {
         let buffer = ProposalBuffer()
         var run = AIRun(surface: surface.rawValue, prompt: prompt, command: "")
         run.conversationID = conversationID
+        run.title = title
 
         do {
             let invocation = try CLILocator.invocation(for: configuration.command)
@@ -397,12 +400,16 @@ final class AgentSession {
     /// of what the assistant is told, and it ships to every user.
     func systemPrompt(for surface: AISurface, history: String = "") -> String {
         let context = model.planningContext()
+        let persona = Preferences.shared.persona
         let now = Date()
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE, d MMMM yyyy"
 
         return """
-        You are the scheduling agent inside Cadence, a personal macOS task manager.
+        You are \(persona.name), the companion who lives inside Cadence, a
+        personal macOS task manager.
+
+        \(persona.promptSection)
 
         Today is \(formatter.string(from: now)). The current time is \
         \(Format.time(now)). Timezone \(TimeZone.current.identifier). Working \
@@ -438,12 +445,21 @@ final class AgentSession {
         \(Self.externalWorkRules)
 
         Memory:
-        - The notes below are what you already know. Use them when planning.
+        - The notes below are what you already know about this person. They are
+          not a planning aid. Use them in **everything** you say: what they are
+          working on and why, how much detail they want, what they already know
+          so you do not explain it again, what they care about. Knowing somebody
+          is what makes an answer theirs rather than one anybody could have got.
+        - Never recite them. Knowing that they work in Swift means answering in
+          Swift, not opening with "since you work in Swift". A person who tells
+          you what they remember about you is not paying attention, they are
+          performing it.
         - Before you finish, ask yourself whether this turn taught you anything
-          durable about how this person works — a preference, a project's shape,
-          a goal, a constraint, a habit their records show. If it did, save it
-          with `remember`. This is a judgement you make every turn, not a chore
-          for later: the fact is cheapest to record the moment it is said.
+          durable about this person — a preference, a project's shape, a goal, a
+          constraint, a habit their records show, or something they simply care
+          about. If it did, save it with `remember`. This is a judgement you make
+          every turn, not a chore for later: the fact is cheapest to record the
+          moment it is said.
         - Say nothing about it in your reply unless the user asks. Storing a
           memory is not news.
         - Memory is saved directly, not reviewed, so store facts rather than
@@ -454,6 +470,10 @@ final class AgentSession {
         - Store what a turn *implies*, never the turn itself: "prefers deep work
           before lunch" is durable, "asked me to move the review to Thursday" is
           not. Individual tasks belong in the task list, not in memory.
+        - What they care about away from the work counts, and is the easiest
+          thing to let slip. Somebody who mentions twice that they have not been
+          walking in months has told you something; file it as `interest`. It is
+          not your job to do anything about it — just to know it.
         - Set `source` honestly, because it decides what gets questioned later.
           "user" means they told you, and never expires — there is nothing to
           re-check it against, so claiming it for a guess buries the guess
@@ -611,7 +631,9 @@ final class AgentSession {
     /// other keys are therefore guesses, and the fallback is what actually
     /// carries them: an envelope nobody here recognises is returned whole, so
     /// the user sees the model's words wrapped in JSON rather than nothing.
-    static func parseFinalText(from stdout: String) -> String {
+    /// `nonisolated` because it touches nothing on the session: the tool
+    /// layer reads stored runs back with it, off the main actor.
+    nonisolated static func parseFinalText(from stdout: String) -> String {
         let raw = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let data = raw.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]

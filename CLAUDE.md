@@ -77,7 +77,42 @@ outside the bundle, so replacing the app never touches it.
   again. Add a new one. `testShippedMigrationIdentifiersAreStable` guards this.
 - The updater snapshots and verifies the database before every install.
 
+## The window
+
+Three workspaces (`Features/Root/RootView.swift`), and the order is the claim
+the app makes about itself: **Chat**, **Knowledge**, **Schedule**. It began as a
+task manager with an assistant bolted to the side and the window said so — a
+list, a calendar, and a column you could open. It is now a companion that
+happens to hold your calendar.
+
+Each workspace brings **its own sidebar** (conversations / shelves / projects
+and tags). Emptying the column in two of three reads as a bug, and hiding it
+shifts the whole window sideways on every switch.
+
+Knowledge is deliberately not under Settings, where it used to live. Nothing in
+it is a preference — it is the assistant's own account of who you are, written
+**unreviewed**, and the entire point of showing it is that the account can be
+wrong and you are the only one who can say so. Behind a gear icon, a picture of
+you that nobody looks at goes stale silently and takes every answer drawn from
+it with it.
+
+`AIPanelView` is one view in two shapes (`isPrimary`). As a column it is capped
+so it cannot crush the calendar beside it; as the window it is uncapped, but the
+transcript and the composer both sit on a ~760pt measure — a paragraph set
+across a wide window runs past a hundred characters a line and the eye loses its
+place coming back.
+
 ## Visual language
+
+`Domain/Persona.swift` is who the companion is. The character is a **voice,
+never a behaviour**, and that rule lives in `promptSection` rather than in each
+voice so a new one cannot omit it — a blunt character that decides you do not
+need to hear about a clash has stopped being a character. Every shipped voice
+carries at least one *prohibition*, which is the part that actually moves a
+model's register; a test enforces it. `dailyRemarks` sits on the persona because
+how much somebody talks is not a preference about them, it is them — and it is
+spent when something is **said**, not when a cadence is checked, so a morning of
+`SKIP`s leaves the afternoon's one worthwhile remark affordable.
 
 `Features/Shared/DesignSystem.swift` holds the spacing scale (`Metrics`), type
 scale (`Typography`) and the shared row furniture. Use them rather than fresh
@@ -147,10 +182,21 @@ finds it far faster than reading the code.
   server can also be kept up on a fixed port for *other* agents to drive
   (`ExternalAgentService`, off by default): their writes stage into a proposal
   and surface as a banner, so an outside agent can ask but never write.
-  `ScheduledRuns` adds the two unattended prompts, and polls for due-ness rather
-  than firing a timer — a sleeping Mac never fires the 21:00 timer. Task
+  `ScheduledRuns` adds the three unattended prompts, and polls for due-ness
+  rather than firing a timer — a sleeping Mac never fires the 21:00 timer. Task
   writes are `propose_*`, staged and reviewed. Memory writes land directly and
-  self-correct via a stable key. A configured command that is not an executable
+  self-correct via a stable key.
+
+  The third unattended run, `portraitPrompt`, is what makes the companion a
+  companion: every few days it reads recent conversations back through
+  `read_conversations` and writes what they imply about the person, as
+  `interest` memories rather than planning facts. Two rules there are load-
+  bearing. `read_conversations` cannot see the unattended surfaces, **including
+  its own** — otherwise it reads its own earlier guesses as evidence and gets
+  more confident every pass without touching reality. And the prompt spends
+  most of its length on what *not* to write: asked to summarise conversations, a
+  model writes a diary ("asked about SwiftUI layout on Tuesday"), which is never
+  true a second time and buries the four durable facts under three hundred. A configured command that is not an executable
   file (an alias, a shell function, a `PATH` from `.zshrc`) is run through
   `zsh -ilc` with the command bare, the arguments quoted, and the whole line
   under `eval` — see `docs/AI-INTEGRATION.md` §7 for why each part is needed.

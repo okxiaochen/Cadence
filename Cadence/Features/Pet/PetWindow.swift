@@ -64,6 +64,8 @@ final class PetWindowController: NSObject, NSWindowDelegate {
 
     // MARK: - The panel
 
+    static let panelIdentifier = NSUserInterfaceItemIdentifier("cadence.pet")
+
     private func makePanel() -> NSPanel {
         let panel = PetPanel(
             contentRect: NSRect(x: 0, y: 0, width: 300, height: 420),
@@ -86,6 +88,9 @@ final class PetWindowController: NSObject, NSWindowDelegate {
             .canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle
         ]
         panel.delegate = self
+        // Named so the view inside it can find it again. It needs the frame and
+        // the key state as *facts*, not as events — see `PetView.watchAway`.
+        panel.identifier = PetWindowController.panelIdentifier
         panel.contentView = hosting()
         place(panel)
         return panel

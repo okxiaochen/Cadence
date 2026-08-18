@@ -359,6 +359,15 @@ final class AppDatabase {
                 """)
         }
 
+        // M15: a run can be named by whatever started it. Without this a
+        // conversation is titled by its opening prompt, which for the
+        // companion's own buttons is the instruction — six rows of
+        // "Use run_command with: curl -s 'wttr.in…" and no way to tell the
+        // weather apart from the news.
+        migrator.registerMigration("v15_run_title") { db in
+            try db.execute(sql: "ALTER TABLE ai_run ADD COLUMN title TEXT")
+        }
+
         return migrator
     }
 }
