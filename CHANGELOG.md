@@ -13,6 +13,8 @@ it is empty, and turns it into the version's section on the way out.
 
 ## Unreleased
 
+## 0.10.1 — 2026-08-18
+
 - **"The release information could not be read" now says what actually
   happened.** It was shown for every failed update check whatever the cause,
   and the commonest cause has nothing to do with the release: GitHub allows 60
