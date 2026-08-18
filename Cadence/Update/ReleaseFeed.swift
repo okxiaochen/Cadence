@@ -54,13 +54,56 @@ enum ReleaseFeedError: LocalizedError {
     case malformed
     case noAsset
     case notNewer
+    /// GitHub is refusing to answer this address for now.
+    case rateLimited(resetAt: Date?)
+    /// Anything else GitHub said that was not 200.
+    case http(status: Int)
 
     var errorDescription: String? {
         switch self {
-        case .malformed: "The release information could not be read."
-        case .noAsset: "That release has no macOS download attached."
-        case .notNewer: "Cadence is up to date."
+        case .malformed:
+            "The release information could not be read."
+        case .noAsset:
+            "That release has no macOS download attached."
+        case .notNewer:
+            "Cadence is up to date."
+        case .rateLimited(let resetAt):
+            "GitHub is rate-limiting this network — it allows 60 unauthenticated "
+                + "requests an hour from one address, shared with every other tool "
+                + "on it."
+                + (resetAt.map { " It will answer again after \(Format.time($0))." } ?? "")
+        case .http(let status):
+            "GitHub answered \(status). Nothing is wrong with your copy of Cadence."
         }
+    }
+}
+
+extension ReleaseFeedError {
+    /// What a non-200 actually was.
+    ///
+    /// Every one of these used to be reported as `.malformed` — "the release
+    /// information could not be read" — which describes a parsing problem and
+    /// is wrong about all of them. The commonest by far is the rate limit,
+    /// which has nothing to do with this app: sixty requests an hour is per
+    /// *address*, so a machine that also runs `gh`, a coding agent and a
+    /// package manager can spend it without Cadence asking once.
+    ///
+    /// Naming it matters more than it looks. "Could not be read" reads as a
+    /// broken release and invites somebody to go and re-cut it; "GitHub is
+    /// rate-limiting this network" reads as "wait", which is the correct
+    /// action and costs nothing.
+    static func from(status: Int, headers: [AnyHashable: Any]) -> ReleaseFeedError {
+        func header(_ name: String) -> String? {
+            headers.first { ($0.key as? String)?.lowercased() == name }?.value as? String
+        }
+        let exhausted = header("x-ratelimit-remaining").flatMap(Int.init) == 0
+        if (status == 403 || status == 429), exhausted || header("retry-after") != nil {
+            let reset = header("x-ratelimit-reset")
+                .flatMap(Double.init)
+                .map { Date(timeIntervalSince1970: $0) }
+            return .rateLimited(resetAt: reset)
+        }
+        return .http(status: status)
     }
 }
 

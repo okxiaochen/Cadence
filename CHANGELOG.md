@@ -13,6 +13,14 @@ it is empty, and turns it into the version's section on the way out.
 
 ## Unreleased
 
+- **"The release information could not be read" now says what actually
+  happened.** It was shown for every failed update check whatever the cause,
+  and the commonest cause has nothing to do with the release: GitHub allows 60
+  unauthenticated requests an hour **per network address**, shared with every
+  other tool on your machine. It now says so, and when the limit lifts.
+- A failed check no longer retries on the next launch. It waits half an hour —
+  retrying into a rate limit is how one bad hour became "it keeps saying that".
+
 ## 0.10.0 — 2026-08-17
 
 The window is now three workspaces — **Chat**, **Knowledge** and **Schedule**,

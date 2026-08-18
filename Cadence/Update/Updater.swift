@@ -50,6 +50,7 @@ final class Updater {
         static let automatic = "checksForUpdatesAutomatically"
         static let lastChecked = "lastUpdateCheckAt"
         static let skippedVersion = "skippedUpdateVersion"
+        static let lastAttempt = "lastUpdateCheckAttemptAt"
     }
 
     init(database: AppDatabase, session: URLSession = .shared) {
@@ -81,8 +82,24 @@ final class Updater {
     /// Called at launch. Quiet: never surfaces "up to date" or an error.
     func checkInBackground() async {
         guard checksAutomatically else { return }
-        if let lastCheckedAt, Date().timeIntervalSince(lastCheckedAt) < 60 * 60 * 6 { return }
+        let now = Date()
+        if let lastCheckedAt, now.timeIntervalSince(lastCheckedAt) < 60 * 60 * 6 { return }
+
+        // A *failed* check has to hold the door too. `lastCheckedAt` is only
+        // written on success, so before this a run of failures had no floor
+        // under it at all: every launch tried again immediately. That is the
+        // worst possible shape, because the commonest reason to fail is a rate
+        // limit — retrying into it is how you stay inside it, and how one bad
+        // hour turns into "sometimes it says the release cannot be read".
+        let lastAttempt = UserDefaults.standard.object(forKey: Key.lastAttempt) as? Date
+        if let lastAttempt, now.timeIntervalSince(lastAttempt) < 60 * 30 { return }
+
         await check(announcing: false)
+    }
+
+    private func noteChecked() {
+        lastCheckedAt = Date()
+        UserDefaults.standard.set(lastCheckedAt, forKey: Key.lastChecked)
     }
 
     /// Called from the menu. Says something either way.
@@ -100,14 +117,26 @@ final class Updater {
             request.setValue("Cadence/\(currentVersion)", forHTTPHeaderField: "User-Agent")
             request.timeoutInterval = 20
 
+            UserDefaults.standard.set(Date(), forKey: Key.lastAttempt)
             let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            guard let http = response as? HTTPURLResponse else {
                 throw ReleaseFeedError.malformed
             }
 
+            guard http.statusCode == 200 else {
+                throw ReleaseFeedError.from(status: http.statusCode, headers: http.allHeaderFields)
+            }
+
+            // Conditional requests were tried here and taken out again. The
+            // reason for them was that a 304 costs nothing against GitHub's
+            // rate limit; measured against the live API, a 304 costs exactly
+            // what a 200 costs. What was left was bandwidth, bought with an
+            // invariant worth more than that — the ETag could only be stored
+            // after a check that found *nothing*, because a 304 carries no
+            // release to put in the banner, so storing one after finding an
+            // update made the offer vanish and never return.
             let release = try ReleaseFeed.parse(data)
-            lastCheckedAt = Date()
-            UserDefaults.standard.set(lastCheckedAt, forKey: Key.lastChecked)
+            noteChecked()
 
             guard release.version > currentVersion else {
                 state = announcing ? .upToDate : .idle

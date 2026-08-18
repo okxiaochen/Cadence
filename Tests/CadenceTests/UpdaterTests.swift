@@ -272,4 +272,61 @@ final class UpdaterTests: XCTestCase {
         let release = try ReleaseFeed.parse(feed())
         XCTAssertNil(release.signatureURL)
     }
+
+    // MARK: - What a failed check actually says
+
+    /// Every non-200 used to arrive as "The release information could not be
+    /// read", which describes a parsing problem and is wrong about all of them.
+    /// It reads as a broken release and invites somebody to go and re-cut one.
+    func testRateLimitingIsNamedRatherThanCalledUnreadable() {
+        let reset = Date(timeIntervalSince1970: 1_800_000_000)
+        let error = ReleaseFeedError.from(status: 403, headers: [
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": "1800000000"
+        ])
+        guard case .rateLimited(let at) = error else {
+            return XCTFail("got \(error) instead of a rate limit")
+        }
+        XCTAssertEqual(at, reset)
+
+        let message = error.localizedDescription
+        XCTAssertTrue(message.contains("rate-limiting"), message)
+        // The number is the whole explanation: it is per address, not per app,
+        // so the reader needs to know Cadence is not the one spending it.
+        XCTAssertTrue(message.contains("60"), message)
+        XCTAssertFalse(message.contains("could not be read"), message)
+    }
+
+    func testHeaderNamesAreMatchedWhateverTheirCase() {
+        // URLSession normalises them one way, a proxy or a test another.
+        let error = ReleaseFeedError.from(status: 429, headers: [
+            "X-RateLimit-Remaining": "0"
+        ])
+        guard case .rateLimited = error else {
+            return XCTFail("case-sensitive header matching")
+        }
+    }
+
+    /// A 403 that is not about the limit is not a rate limit.
+    func testAForbiddenThatIsNotTheLimitIsReportedAsItself() {
+        let error = ReleaseFeedError.from(status: 403, headers: ["x-ratelimit-remaining": "57"])
+        guard case .http(let status) = error else {
+            return XCTFail("got \(error)")
+        }
+        XCTAssertEqual(status, 403)
+    }
+
+    func testAServerErrorSaysItIsNotYourCopy() {
+        let message = ReleaseFeedError.from(status: 502, headers: [:]).localizedDescription
+        XCTAssertTrue(message.contains("502"), message)
+        XCTAssertTrue(message.contains("Nothing is wrong with your copy"), message)
+    }
+
+    /// A rate limit with no reset header still has to produce a sentence.
+    func testAMissingResetTimeStillReadsAsASentence() {
+        let message = ReleaseFeedError.from(
+            status: 429, headers: ["retry-after": "60"]
+        ).localizedDescription
+        XCTAssertTrue(message.hasSuffix("on it."), message)
+    }
 }
