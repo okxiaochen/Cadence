@@ -22,6 +22,23 @@ project file**. New `.swift` files under `Cadence/` are picked up by path, but
 After changing anything the user will look at, rebuild **and relaunch** the app.
 A stale running instance has caused "I can't see the changes" more than once.
 
+## Release notes are shown in the app
+
+`CHANGELOG.md` → `## Unreleased`. Add to it as you go; `./scripts/release.sh`
+**refuses to publish while it is empty**, and turns the section into the
+version's on the way out.
+
+The rule has teeth in the script rather than living here alone, for the same
+reason `testShippedMigrationIdentifiersAreStable` exists: a rule only a
+document knows is a rule that gets skipped. Releases 0.1.0 through 0.10.0 went
+out on `--generate-notes`, which is how nobody noticed.
+
+Write them for **somebody in the update sheet**, not for GitHub. `ReleaseFeed`
+reads the release body and `UpdateBanner` renders it as markdown in the panel
+that offers the update — so the reader is deciding whether this is worth
+restarting for. What is different for them, in their words. A list of commit
+titles answers a question they did not ask.
+
 ## Release signing — read before touching releases
 
 Releases are signed with an **Ed25519 key that exists only on this machine**:
